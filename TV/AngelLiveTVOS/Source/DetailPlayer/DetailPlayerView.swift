@@ -88,12 +88,18 @@ struct DetailPlayerView: View {
                     .safeAreaPadding(.all)
                     .zIndex(1)
 
-                // 缓冲加载指示器 - 视频播放中但在缓冲时显示
-                if playerCoordinator.state == .buffering || playerCoordinator.playerLayer?.player.playbackState == .seeking {
-                    ProgressView()
-                        .scaleEffect(2.0)
-                        .tint(.white)
-                        .zIndex(4)
+                // 加载/缓冲指示器 - URL 已就绪但尚未开始播放，或播放中缓冲时显示
+                if shouldShowStreamLoading {
+                    TVStreamLoadingOverlay(
+                        title: isInitialStreamLoading ? "正在加载直播流…" : "缓冲中…",
+                        speedProvider: { [playerCoordinator] in
+                            guard let speed = playerCoordinator.playerLayer?.player.dynamicInfo.networkSpeed else {
+                                return nil
+                            }
+                            return Int64(speed)
+                        }
+                    )
+                    .zIndex(4)
                 }
 
                 PlayerControlView(playerCoordinator: playerCoordinator)
@@ -143,5 +149,72 @@ struct DetailPlayerView: View {
         didCleanup = true
         playerCoordinator.resetPlayer()
         roomInfoViewModel.disConnectSocket()
+    }
+
+    /// 是否应展示加载层（缓冲或初次加载）。
+    private var shouldShowStreamLoading: Bool {
+        let state = playerCoordinator.state
+        if state == .buffering { return true }
+        if playerCoordinator.playerLayer?.player.playbackState == .seeking { return true }
+        return isInitialStreamLoading
+    }
+
+    /// 流首次加载（URL 已就绪但未开始播放）。
+    private var isInitialStreamLoading: Bool {
+        switch playerCoordinator.state {
+        case .initialized, .preparing, .readyToPlay:
+            return !roomInfoViewModel.isPlaying
+        default:
+            return false
+        }
+    }
+}
+
+// MARK: - 直播加载指示
+
+/// tvOS 直播流加载层：菊花 + 标题 + 实时网速。
+struct TVStreamLoadingOverlay: View {
+    let title: String
+    let speedProvider: () -> Int64?
+
+    @State private var bytesPerSecond: Int64 = 0
+    @State private var hasSpeed: Bool = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(2.0)
+                .tint(.white)
+            Text(title)
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(.white)
+            Text(hasSpeed ? Self.formatSpeed(bytesPerSecond) : "正在测速…")
+                .font(.system(size: 22))
+                .foregroundStyle(.white.opacity(0.75))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 32)
+        .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .task {
+            while !Task.isCancelled {
+                if let speed = speedProvider() {
+                    await MainActor.run {
+                        bytesPerSecond = speed
+                        hasSpeed = true
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private static func formatSpeed(_ bytesPerSecond: Int64) -> String {
+        let bps = max(bytesPerSecond, 0)
+        let kb = Double(bps) / 1024.0
+        if kb < 1024 {
+            return String(format: "%.0f KB/s", kb)
+        }
+        return String(format: "%.1f MB/s", kb / 1024.0)
     }
 }

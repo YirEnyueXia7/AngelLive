@@ -185,8 +185,8 @@ struct UnifiedPlayerControlOverlay: View {
                     // 右上角：功能按钮
                     topRightLayer
 
-                    // 中间：暂停大按钮
-                    if !bridge.isPlaying {
+                    // 中间：暂停大按钮（加载/缓冲时不显示，避免「页面卡住」错觉，交给 loading overlay）
+                    if !bridge.isPlaying && !bridge.isBuffering && !bridge.isInitialLoading {
                         Button {
                             bridge.togglePlayPause()
                         } label: {

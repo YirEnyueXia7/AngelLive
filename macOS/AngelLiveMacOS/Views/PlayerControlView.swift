@@ -43,6 +43,19 @@ struct PlayerControlView: View {
         favoriteModel.roomList.contains(where: { $0.roomId == room.roomId })
     }
 
+    /// 流首次加载或缓冲中：避免在 loading overlay 之上又叠一个中间播放按钮。
+    private var isStreamLoadingOrBuffering: Bool {
+        let state = coordinator.state
+        if state == .buffering { return true }
+        if coordinator.playerLayer?.player.playbackState == .seeking { return true }
+        switch state {
+        case .initialized, .preparing, .readyToPlay:
+            return !viewModel.isPlaying
+        default:
+            return false
+        }
+    }
+
     var body: some View {
         ZStack {
             // 顶部拖动区域（放在最底层，不影响控件点击）
@@ -125,8 +138,8 @@ struct PlayerControlView: View {
                 }
                 .environment(\.colorScheme, .dark)
 
-                // 中间：播放/暂停大按钮（暂停时显示）
-                if !viewModel.isPlaying {
+                // 中间：播放/暂停大按钮（暂停时显示；加载/缓冲时让位给 loading overlay）
+                if !viewModel.isPlaying && !isStreamLoadingOrBuffering {
                     Button {
                         if viewModel.isPlaying {
                             coordinator.playerLayer?.pause()

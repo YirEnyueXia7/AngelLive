@@ -402,12 +402,13 @@ public final class PluginSourceManager: @unchecked Sendable {
     /// 安装所有未安装的插件。
     ///
     /// 三阶段:
-    /// 1. 下载 + 解压所有插件,拿到 manifest(此时未 smoke、未写 last-good);
-    /// 2. 把所有需要登录的插件汇总,统一弹一次确认弹窗;
-    /// 3. 对用户同意的插件做 smoke test 并写 last-good;若用户在第二步取消,则把
-    ///    所有登录类插件回滚,非登录类插件继续激活。
+    /// 1. 根据远程索引中的 auth.required 元数据,在下载前先做一次批量登录确认;
+    ///    用户取消则跳过所有登录类插件,继续安装非登录类插件;
+    /// 2. 下载 + 解压用户同意安装的插件;
+    /// 3. 激活已下载的插件并写 last-good。
     ///
-    /// 这样把原来"每个登录插件弹一次"的串行确认收敛为单次批量确认。
+    /// 这样把原来"安装完全部再弹登录确认"的体验前置到点击"全部安装"瞬间,
+    /// 避免用户白等下载时间后才发现需要登录。
     public func installAll() async -> Int {
         let toInstall = remotePlugins.filter { $0.installState == .notInstalled }
         installTotalCount = toInstall.count
@@ -417,14 +418,41 @@ public final class PluginSourceManager: @unchecked Sendable {
             installCompletedCount = 0
         }
 
+        // Phase 1: 下载前先弹一次批量登录确认 — 利用索引中的 auth.required 元数据。
+        // 发布器约定: 只要 manifest 含 loginFlow, 索引会把 auth.required 标为 true。
+        let loginPlugins = toInstall.filter { $0.item.auth?.required == true }
+        var declinedIds: Set<String> = []
+        if !loginPlugins.isEmpty, let requester = consentRequester {
+            let payload = loginPlugins.map {
+                LoginPluginEntry(
+                    pluginId: $0.item.pluginId,
+                    displayName: $0.displayName
+                )
+            }
+            let approved = await requester.requestConsent(
+                reason: .installingLoginPluginsBatch(plugins: payload)
+            )
+            if !approved {
+                Logger.info(
+                    "User declined batch login plugin install: \(loginPlugins.count) plugins",
+                    category: .plugin
+                )
+                for plugin in loginPlugins {
+                    plugin.installState = .notInstalled
+                    declinedIds.insert(plugin.id)
+                    installCompletedCount += 1
+                }
+            }
+        }
+
         struct Staged {
             let displayItem: RemotePluginDisplayItem
             let manifest: LiveParsePluginManifest
         }
 
-        // Phase 1: 下载 + 解压
+        // Phase 2: 下载 + 解压用户同意的插件。
         var staged: [Staged] = []
-        for plugin in toInstall {
+        for plugin in toInstall where !declinedIds.contains(plugin.id) {
             plugin.installState = .installing
             do {
                 let manifest = try await updater.install(item: plugin.item)
@@ -440,39 +468,9 @@ public final class PluginSourceManager: @unchecked Sendable {
             }
         }
 
-        // Phase 2: 批量确认
-        let loginEntries = staged.filter { $0.manifest.requiresLogin }
-        var declinedIds: Set<String> = []
-        if !loginEntries.isEmpty, let requester = consentRequester {
-            let payload = loginEntries.map {
-                LoginPluginEntry(
-                    pluginId: $0.manifest.pluginId,
-                    displayName: $0.displayItem.displayName
-                )
-            }
-            let approved = await requester.requestConsent(
-                reason: .installingLoginPluginsBatch(plugins: payload)
-            )
-            if !approved {
-                Logger.info(
-                    "User declined batch login plugin install: \(loginEntries.count) plugins",
-                    category: .plugin
-                )
-                for entry in loginEntries {
-                    updater.rollbackInstalled(
-                        manifest: entry.manifest,
-                        manager: LiveParsePlugins.shared
-                    )
-                    entry.displayItem.installState = .notInstalled
-                    declinedIds.insert(entry.manifest.pluginId)
-                    installCompletedCount += 1
-                }
-            }
-        }
-
-        // Phase 3: 激活剩余插件
+        // Phase 3: 激活已下载的插件
         var successCount = 0
-        for entry in staged where !declinedIds.contains(entry.manifest.pluginId) {
+        for entry in staged {
             do {
                 try await updater.activateInstalled(
                     manifest: entry.manifest,

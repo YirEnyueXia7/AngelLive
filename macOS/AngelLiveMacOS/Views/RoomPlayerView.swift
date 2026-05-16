@@ -210,22 +210,46 @@ private extension RoomPlayerView {
                     }
                     .ignoresSafeArea()
 
-                if coordinator.state == .buffering || coordinator.playerLayer?.player.playbackState == .seeking {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .tint(.white)
+                if shouldShowStreamLoading(viewModel: viewModel) {
+                    MacStreamLoadingOverlay(
+                        title: isInitialStreamLoading(viewModel: viewModel) ? "正在加载直播流…" : "缓冲中…",
+                        speedProvider: { [coordinator] in
+                            guard let speed = coordinator.playerLayer?.player.dynamicInfo.networkSpeed else {
+                                return nil
+                            }
+                            return Int64(speed)
+                        }
+                    )
                 }
             }
         } else {
             VStack(spacing: 16) {
                 ProgressView()
                     .scaleEffect(1.5)
-                Text("正在加载...")
+                Text("正在解析直播地址…")
                     .font(.title3)
                     .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
+        }
+    }
+
+    /// 是否应展示加载层（缓冲或初次加载）。
+    func shouldShowStreamLoading(viewModel: RoomInfoViewModel) -> Bool {
+        let state = coordinator.state
+        if state == .buffering { return true }
+        if coordinator.playerLayer?.player.playbackState == .seeking { return true }
+        return isInitialStreamLoading(viewModel: viewModel)
+    }
+
+    /// 流首次加载（URL 已就绪但未开始播放）。
+    func isInitialStreamLoading(viewModel: RoomInfoViewModel) -> Bool {
+        switch coordinator.state {
+        case .initialized, .preparing, .readyToPlay:
+            return !viewModel.isPlaying
+        default:
+            return false
         }
     }
 
@@ -283,6 +307,55 @@ private extension RoomPlayerView {
         case top
         case bottom
         case full
+    }
+}
+
+// MARK: - 直播加载指示
+
+/// macOS 直播流加载层：菊花 + 标题 + 实时网速。
+struct MacStreamLoadingOverlay: View {
+    let title: String
+    let speedProvider: () -> Int64?
+
+    @State private var bytesPerSecond: Int64 = 0
+    @State private var hasSpeed: Bool = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .scaleEffect(1.4)
+                .tint(.white)
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+            Text(hasSpeed ? Self.formatSpeed(bytesPerSecond) : "正在测速…")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.75))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .task {
+            while !Task.isCancelled {
+                if let speed = speedProvider() {
+                    await MainActor.run {
+                        bytesPerSecond = speed
+                        hasSpeed = true
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private static func formatSpeed(_ bytesPerSecond: Int64) -> String {
+        let bps = max(bytesPerSecond, 0)
+        let kb = Double(bps) / 1024.0
+        if kb < 1024 {
+            return String(format: "%.0f KB/s", kb)
+        }
+        return String(format: "%.1f MB/s", kb / 1024.0)
     }
 }
 

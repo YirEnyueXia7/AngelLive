@@ -237,10 +237,18 @@ struct PlayerContentView: View {
                 ZStack {
                     compatiblePlayerSurface(playURL: playURL)
 
-                    if shouldShowBuffering {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(.white)
+                    if shouldShowLoading {
+                        StreamLoadingOverlay(
+                            title: isInitialStreamLoading ? "正在加载直播流…" : "缓冲中…",
+                            speedProvider: { [playerCoordinator] in
+                                #if canImport(KSPlayer)
+                                if let speed = playerCoordinator.playerLayer?.player.dynamicInfo.networkSpeed {
+                                    return Int64(speed)
+                                }
+                                #endif
+                                return nil
+                            }
+                        )
                     }
 
                     // 竖屏直播模式使用专用控制层，普通模式使用统一控制层
@@ -481,11 +489,38 @@ struct PlayerContentView: View {
         return vlcState.isBuffering && !hasVLCStartedPlayback
     }
 
+    /// 直播流首次加载（URL 已就绪但尚未开始播放）：区别于用户主动暂停。
+    /// 命中时上层会显示「正在加载…」+ 网速，避免中间播放按钮误导用户「页面卡住」。
+    private var isInitialStreamLoading: Bool {
+        if useKSPlayer {
+            #if canImport(KSPlayer)
+            let state = playerCoordinator.state
+            // 还没开始过播放：尚未进入 buffering/bufferFinished/paused/error
+            switch state {
+            case .initialized, .preparing, .readyToPlay:
+                return !viewModel.isPlaying
+            default:
+                return false
+            }
+            #else
+            return false
+            #endif
+        }
+        // VLC 还未首次进入播放状态时视为加载中
+        return !hasVLCStartedPlayback && vlcState != .error && vlcState != .stopped
+    }
+
+    /// 当前是否应展示加载指示（buffering 或初次加载）。
+    private var shouldShowLoading: Bool {
+        shouldShowBuffering || isInitialStreamLoading
+    }
+
     private var controlBridge: PlayerControlBridge {
         if useKSPlayer {
             return PlayerControlBridge(
                 isPlaying: viewModel.isPlaying || playerCoordinator.state.isPlaying,
                 isBuffering: playerCoordinator.state == .buffering || playerCoordinator.playerLayer?.player.playbackState == .seeking,
+                isInitialLoading: isInitialStreamLoading,
                 supportsPictureInPicture: playerCoordinator.playerLayer is KSComplexPlayerLayer,
                 togglePlayPause: {
                     if viewModel.isPlaying || playerCoordinator.state.isPlaying {
@@ -531,6 +566,7 @@ struct PlayerContentView: View {
         return PlayerControlBridge(
             isPlaying: viewModel.isPlaying,
             isBuffering: vlcState.isBuffering,
+            isInitialLoading: isInitialStreamLoading,
             supportsPictureInPicture: vlcPlaybackController.isPictureInPictureSupported,
             togglePlayPause: {
                 vlcPlaybackController.togglePlayPause()
@@ -605,5 +641,57 @@ private struct VideoAspectRatioModifier: ViewModifier {
     func body(content: Content) -> some View {
         // 所有情况都填满容器，不设置 aspectRatio
         content
+    }
+}
+
+// MARK: - 直播加载指示
+
+/// 直播流加载中指示层：菊花 + 标题 + 实时网速。
+/// 用于替代「黑屏 + 中间播放按钮」造成的卡住错觉。
+struct StreamLoadingOverlay: View {
+    let title: String
+    /// 由调用方读取播放器的 networkSpeed（字节/秒）。返回 nil 时隐藏网速行。
+    let speedProvider: () -> Int64?
+
+    @State private var bytesPerSecond: Int64 = 0
+    @State private var hasSpeed: Bool = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .scaleEffect(1.4)
+                .tint(.white)
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
+            Text(hasSpeed ? Self.formatSpeed(bytesPerSecond) : "正在测速…")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.white.opacity(0.75))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .task {
+            // 1 秒一次轮询网速，KSPlayer 内部约 1.5s 更新一次，足够及时。
+            while !Task.isCancelled {
+                if let speed = speedProvider() {
+                    await MainActor.run {
+                        bytesPerSecond = speed
+                        hasSpeed = true
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private static func formatSpeed(_ bytesPerSecond: Int64) -> String {
+        let bps = max(bytesPerSecond, 0)
+        let kb = Double(bps) / 1024.0
+        if kb < 1024 {
+            return String(format: "%.0f KB/s", kb)
+        }
+        return String(format: "%.1f MB/s", kb / 1024.0)
     }
 }

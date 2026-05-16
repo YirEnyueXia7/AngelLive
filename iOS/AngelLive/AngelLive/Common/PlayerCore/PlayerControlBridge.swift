@@ -11,6 +11,9 @@ import AngelLiveCore
 struct PlayerControlBridge {
     var isPlaying: Bool
     var isBuffering: Bool
+    /// 流首次加载中：URL 已就绪但尚未开始播放（initialized/preparing/readyToPlay 等阶段）。
+    /// 区别于「用户主动暂停」（state == .paused），用于决定是否展示中间播放按钮 / 加载指示。
+    var isInitialLoading: Bool = false
     var supportsPictureInPicture: Bool
     var togglePlayPause: () -> Void
     var refreshPlayback: () -> Void
