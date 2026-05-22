@@ -108,6 +108,7 @@ struct ContentView: View {
                         }
                     }
                     .tabViewStyle(.sidebarAdaptable)
+                    .background(SidebarWidthEnforcer(min: 180, ideal: 200, max: 260))
                     .navigationDestination(for: LiveModel.self) { room in
                         RoomPlayerView(room: room)
                     }
@@ -115,7 +116,7 @@ struct ContentView: View {
                         WelcomeView {
                             welcomeManager.completeWelcome()
                         }
-                        .presentationSizing(.page.fitted(horizontal: true, vertical: false))
+                        .presentationSizing(.page.fitted(horizontal: true, vertical: true))
                     }
                 }
             }
@@ -316,4 +317,166 @@ struct PlatformDetailTab: View {
 
 #Preview {
     ContentView()
+}
+
+// MARK: - Sidebar Width Enforcer (TabView .sidebarAdaptable workaround)
+
+/// 通过 AppKit 直接对窗口里的 NSSplitView 施加宽度约束。
+/// 用于绕开 SwiftUI 对 TabView(.sidebarAdaptable) sidebar 宽度的内部限制。
+private struct SidebarWidthEnforcer: NSViewRepresentable {
+    let min: CGFloat
+    let ideal: CGFloat
+    let max: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ProbeView()
+        view.min = min
+        view.ideal = ideal
+        view.max = max
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let probe = nsView as? ProbeView else { return }
+        probe.min = min
+        probe.ideal = ideal
+        probe.max = max
+        probe.applySoon()
+    }
+
+    private final class ProbeView: NSView {
+        var min: CGFloat = 180
+        var ideal: CGFloat = 200
+        var max: CGFloat = 260
+        private var hasApplied = false
+        private var observedWindow: NSWindow?
+        private var observers: [NSObjectProtocol] = []
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            removeObservers()
+            if let window = self.window {
+                installObservers(for: window)
+            }
+            applySoon()
+        }
+
+        deinit {
+            removeObservers()
+        }
+
+        private func installObservers(for window: NSWindow) {
+            observedWindow = window
+            let nc = NotificationCenter.default
+            let names: [Notification.Name] = [
+                NSWindow.didBecomeKeyNotification,
+                NSWindow.didResignKeyNotification,
+                NSWindow.didChangeOcclusionStateNotification,
+                NSWindow.willEnterFullScreenNotification,
+                NSWindow.didEnterFullScreenNotification,
+                NSWindow.willExitFullScreenNotification,
+                NSWindow.didExitFullScreenNotification,
+                NSWindow.didResizeNotification
+            ]
+            for name in names {
+                let token = nc.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    self?.apply()
+                }
+                observers.append(token)
+            }
+        }
+
+        private func removeObservers() {
+            let nc = NotificationCenter.default
+            for token in observers { nc.removeObserver(token) }
+            observers.removeAll()
+            observedWindow = nil
+        }
+
+        func applySoon() {
+            // 多次重试,覆盖 SwiftUI 不同阶段的回写
+            for delay in [0.0, 0.1, 0.3, 0.6, 1.0, 2.0, 4.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.apply()
+                }
+            }
+        }
+
+        private func apply() {
+            guard let window = self.window ?? observedWindow else { return }
+            // 关掉 titlebar 下方分隔线(NSContainerConcentricGlassEffectView 的边缘高光治不了,接受它)
+            window.titlebarSeparatorStyle = .none
+            window.toolbar?.showsBaselineSeparator = false
+
+            // 1) 优先尝试通过 NSSplitViewController 配置
+            if let svc = findSplitVC(in: window),
+               let sidebarItem = svc.splitViewItems.first {
+                sidebarItem.minimumThickness = min
+                sidebarItem.maximumThickness = max
+                sidebarItem.canCollapse = false
+                // 关闭每个 split item 自己的 toolbar 顶部分隔条
+                for item in svc.splitViewItems {
+                    item.titlebarSeparatorStyle = .none
+                }
+                if !hasApplied {
+                    svc.splitView.setPosition(ideal, ofDividerAt: 0)
+                    hasApplied = true
+                }
+                return
+            }
+
+            // 2) 找不到 controller 时,直接操作 NSSplitView
+            guard let contentView = window.contentView,
+                  let split = findSplitView(in: contentView),
+                  let sidebar = split.arrangedSubviews.first else { return }
+
+            // 直接给 sidebar 加一对宽度约束
+            sidebar.translatesAutoresizingMaskIntoConstraints = false
+            // 移除之前可能加过的同名约束
+            sidebar.constraints
+                .filter { $0.identifier == "SidebarWidthEnforcer.min" || $0.identifier == "SidebarWidthEnforcer.max" }
+                .forEach { sidebar.removeConstraint($0) }
+
+            let minC = sidebar.widthAnchor.constraint(greaterThanOrEqualToConstant: min)
+            minC.identifier = "SidebarWidthEnforcer.min"
+            minC.priority = .required
+            minC.isActive = true
+
+            let maxC = sidebar.widthAnchor.constraint(lessThanOrEqualToConstant: max)
+            maxC.identifier = "SidebarWidthEnforcer.max"
+            maxC.priority = .required
+            maxC.isActive = true
+
+            if !hasApplied {
+                split.setPosition(ideal, ofDividerAt: 0)
+                hasApplied = true
+            }
+        }
+
+        private func findSplitVC(in window: NSWindow) -> NSSplitViewController? {
+            if let root = window.contentViewController, let vc = searchControllers(in: root) {
+                return vc
+            }
+            return nil
+        }
+
+        private func searchControllers(in vc: NSViewController) -> NSSplitViewController? {
+            if let svc = vc as? NSSplitViewController { return svc }
+            for child in vc.children {
+                if let found = searchControllers(in: child) { return found }
+            }
+            return nil
+        }
+
+        private func findSplitView(in view: NSView) -> NSSplitView? {
+            if let split = view as? NSSplitView, split.arrangedSubviews.count >= 2 {
+                return split
+            }
+            for sub in view.subviews {
+                if let found = findSplitView(in: sub) { return found }
+            }
+            return nil
+        }
+
+    }
 }

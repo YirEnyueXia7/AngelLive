@@ -26,11 +26,6 @@ struct PlayerControlView: View {
     @State private var isFullscreen = false
     @State private var isPinned = false
     @State private var showVolumeSlider = false
-    @State private var isCursorHidden = false
-    @State private var cursorHideTask: Task<Void, Never>?
-    @State private var mouseActivityMonitor: Any?
-    @State private var previousAcceptsMouseMovedEvents: Bool?
-    @State private var mouseTrackingWindow: NSWindow?
     @Binding var volume: Float  // 独立音量控制
     @Binding var isMuted: Bool      // 独立静音状态
     @Environment(\.dismiss) private var dismiss
@@ -353,10 +348,8 @@ struct PlayerControlView: View {
                 case .active:
                     isHovering = true
                     resetHideTimer()
-                    showCursor()
                 case .ended:
                     isHovering = false
-                    scheduleCursorHide()
                 }
             }
 
@@ -379,18 +372,13 @@ struct PlayerControlView: View {
         .sheet(isPresented: $showDanmakuSettings) {
             DanmakuSettingsPanel(viewModel: viewModel)
         }
+        // 鼠标自动隐藏:绑在 NSView 生命周期上,视图析构时一定恢复
+        .background(PlayerCursorAutoHide(hideDelay: 2.5))
         .onAppear {
             syncPinnedState()
-            enableMouseMovedEventsIfNeeded()
-            installMouseActivityMonitor()
         }
         .onDisappear {
-            // 恢复鼠标指针
-            showCursor()
-            cursorHideTask?.cancel()
             hideTask?.cancel()
-            removeMouseActivityMonitor()
-            restoreMouseMovedEventsIfNeeded()
         }
     }
 
@@ -479,96 +467,8 @@ struct PlayerControlView: View {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if !Task.isCancelled {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     isHovering = false
-                    scheduleCursorHide()
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func enableMouseMovedEventsIfNeeded() {
-        guard let window = NSApplication.shared.keyWindow ?? NSApplication.shared.mainWindow else { return }
-        if previousAcceptsMouseMovedEvents == nil {
-            previousAcceptsMouseMovedEvents = window.acceptsMouseMovedEvents
-            mouseTrackingWindow = window
-        }
-        window.acceptsMouseMovedEvents = true
-    }
-
-    @MainActor
-    private func restoreMouseMovedEventsIfNeeded() {
-        guard let previousAcceptsMouseMovedEvents,
-              let window = mouseTrackingWindow else {
-            self.previousAcceptsMouseMovedEvents = nil
-            self.mouseTrackingWindow = nil
-            return
-        }
-        window.acceptsMouseMovedEvents = previousAcceptsMouseMovedEvents
-        self.previousAcceptsMouseMovedEvents = nil
-        self.mouseTrackingWindow = nil
-    }
-
-    @MainActor
-    private func installMouseActivityMonitor() {
-        guard mouseActivityMonitor == nil else { return }
-        mouseActivityMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
-        ) { event in
-            Task { @MainActor in
-                handleMouseActivity(event)
-            }
-            return event
-        }
-    }
-
-    @MainActor
-    private func removeMouseActivityMonitor() {
-        guard let mouseActivityMonitor else { return }
-        NSEvent.removeMonitor(mouseActivityMonitor)
-        self.mouseActivityMonitor = nil
-    }
-
-    @MainActor
-    private func handleMouseActivity(_ event: NSEvent) {
-        guard NSApplication.shared.isActive else { return }
-        guard let window = event.window ?? NSApplication.shared.keyWindow, window.isKeyWindow else { return }
-        guard window.styleMask.contains(.fullScreen) else {
-            if isCursorHidden {
-                showCursor()
-            }
-            return
-        }
-
-        isHovering = true
-        showCursor()
-        resetHideTimer()
-    }
-
-    private func showCursor() {
-        cursorHideTask?.cancel()
-        if isCursorHidden {
-            NSCursor.unhide()
-            isCursorHidden = false
-        }
-    }
-
-    private func scheduleCursorHide() {
-        cursorHideTask?.cancel()
-        cursorHideTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2秒后隐藏鼠标
-            if !Task.isCancelled {
-                await MainActor.run {
-                    // 只在全屏模式下隐藏鼠标
-                    guard NSApplication.shared.isActive else { return }
-                    guard let window = NSApplication.shared.keyWindow, window.isKeyWindow else { return }
-                    let windowIsFullscreen = window.styleMask.contains(.fullScreen)
-                    let mouseLocation = NSEvent.mouseLocation
-                    let isMouseInsideWindow = window.frame.contains(mouseLocation)
-                    if windowIsFullscreen && isMouseInsideWindow && !isHovering && !isCursorHidden {
-                        NSCursor.hide()
-                        isCursorHidden = true
-                    }
                 }
             }
         }
@@ -581,15 +481,10 @@ struct PlayerControlView: View {
     }
 
     private func closePlayer() {
-        // 恢复鼠标指针
-        showCursor()
-        cursorHideTask?.cancel()
-
-        // 如果是全屏模式打开的播放器，关闭时返回主界面
+        // 鼠标显示由 PlayerCursorAutoHide 视图的析构自动处理
         if let manager = fullscreenPlayerManager, manager.showFullscreenPlayer {
             manager.closeFullscreenPlayer()
         } else {
-            // 否则使用 dismiss 关闭窗口
             dismiss()
         }
     }
@@ -956,5 +851,120 @@ private final class DraggableView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
+    }
+}
+
+// MARK: - Player Cursor Auto Hide
+// 把"鼠标静止 N 秒后隐藏,有活动立即显示"绑在 NSView 生命周期上。
+// 关键点:NSView 的 deinit 和 viewWillMove(toWindow: nil) 是确定性回调,
+// SwiftUI 退出播放器视图时一定会触发 -> 一定会恢复鼠标。
+
+struct PlayerCursorAutoHide: NSViewRepresentable {
+    let hideDelay: TimeInterval
+
+    func makeNSView(context: Context) -> CursorAutoHideNSView {
+        CursorAutoHideNSView(hideDelay: hideDelay)
+    }
+
+    func updateNSView(_ nsView: CursorAutoHideNSView, context: Context) {
+        nsView.hideDelay = hideDelay
+    }
+}
+
+final class CursorAutoHideNSView: NSView {
+    var hideDelay: TimeInterval
+    private var monitor: Any?
+    private var hideTimer: Timer?
+    private var didHide = false
+
+    init(hideDelay: TimeInterval) {
+        self.hideDelay = hideDelay
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("not implemented") }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        // 离开窗口时立刻拆除并恢复鼠标
+        if newWindow == nil {
+            teardown()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            install()
+        }
+    }
+
+    deinit {
+        // 终极兜底:就算 viewWillMove 没被触发,deinit 也一定会触发
+        if let m = monitor { NSEvent.removeMonitor(m) }
+        hideTimer?.invalidate()
+        if didHide {
+            NSCursor.unhide()
+        }
+    }
+
+    // MARK: setup/teardown
+
+    private func install() {
+        guard monitor == nil else { return }
+        window?.acceptsMouseMovedEvents = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .mouseMoved,
+            .leftMouseDown, .rightMouseDown, .otherMouseDown,
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .scrollWheel,
+            .keyDown
+        ]) { [weak self] event in
+            self?.handleActivity()
+            return event
+        }
+        // 首次出现:启动隐藏计时器(此时鼠标可见)
+        scheduleHide()
+    }
+
+    private func teardown() {
+        if let m = monitor {
+            NSEvent.removeMonitor(m)
+            monitor = nil
+        }
+        hideTimer?.invalidate()
+        hideTimer = nil
+        showCursorNow()
+    }
+
+    // MARK: handlers
+
+    private func handleActivity() {
+        showCursorNow()
+        scheduleHide()
+    }
+
+    private func scheduleHide() {
+        hideTimer?.invalidate()
+        hideTimer = Timer.scheduledTimer(withTimeInterval: hideDelay, repeats: false) { [weak self] _ in
+            self?.hideCursorNow()
+        }
+    }
+
+    private func hideCursorNow() {
+        guard !didHide else { return }
+        guard let window = window, window.isVisible else { return }
+        // 仅在鼠标处于本窗口范围内时才隐藏,避免影响其他窗口
+        let mouseLocation = NSEvent.mouseLocation
+        guard window.frame.contains(mouseLocation) else { return }
+        NSCursor.hide()
+        didHide = true
+    }
+
+    private func showCursorNow() {
+        guard didHide else { return }
+        NSCursor.unhide()
+        didHide = false
     }
 }
