@@ -109,10 +109,16 @@ struct SettingsButton: View {
             .tint(.primary)
         }
         .sheet(isPresented: $showPlayerSettings) {
-            PlayerSettingsSheet(playerSettingModel: $playerSettingModel)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-                .tint(.primary)
+            PlayerSettingsSheet(
+                playerSettingModel: $playerSettingModel,
+                onAutoPiPChanged: { newValue in
+                    // 把开关同步到当前直播间的 PlayerOptions，
+                    // 否则只有下次重开直播间才生效
+                    viewModel.playerOption.canStartPictureInPictureAutomaticallyFromInline = newValue
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .onChange(of: isAnyPopupOpen) { _, isOpen in
             onPopupStateChanged?(isOpen)
@@ -125,7 +131,13 @@ struct SettingsButton: View {
 /// 播放设置弹窗
 private struct PlayerSettingsSheet: View {
     @Binding var playerSettingModel: PlayerSettingModel
+    var onAutoPiPChanged: (Bool) -> Void
     @Environment(\.dismiss) private var dismiss
+
+    /// 当前内核是否支持画中画（VLC4 路径目前为 no-op）
+    private var pipSupported: Bool {
+        playerSettingModel.playerKernel == .ksplayer
+    }
 
     var body: some View {
         NavigationStack {
@@ -149,6 +161,13 @@ private struct PlayerSettingsSheet: View {
                                         }
                                         .labelsHidden()
                                         .pickerStyle(.menu)
+                                        .onChange(of: playerSettingModel.playerKernel) { _, newKernel in
+                                            // 切到不支持 PiP 的内核时关掉自动 PiP，避免悬空状态
+                                            if newKernel != .ksplayer && playerSettingModel.enableAutoPiPOnBackground {
+                                                playerSettingModel.enableAutoPiPOnBackground = false
+                                                onAutoPiPChanged(false)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -158,8 +177,14 @@ private struct PlayerSettingsSheet: View {
 
                             settingRow {
                                 Toggle("后台播放", isOn: $playerSettingModel.enableBackgroundAudio)
+                                    .tint(.green)
                                     .onChange(of: playerSettingModel.enableBackgroundAudio) { _, newValue in
                                         KSOptions.canBackgroundPlay = newValue
+                                        // 关后台播放时，自动 PiP 必然失效，一起关掉
+                                        if !newValue && playerSettingModel.enableAutoPiPOnBackground {
+                                            playerSettingModel.enableAutoPiPOnBackground = false
+                                            onAutoPiPChanged(false)
+                                        }
                                     }
                             }
 
@@ -167,13 +192,24 @@ private struct PlayerSettingsSheet: View {
                                 .padding(.leading)
 
                             settingRow {
-                                Toggle("自动画中画", isOn: $playerSettingModel.enableAutoPiPOnBackground)
-                                    .onChange(of: playerSettingModel.enableAutoPiPOnBackground) { _, newValue in
-                                        if newValue && !playerSettingModel.enableBackgroundAudio {
-                                            playerSettingModel.enableBackgroundAudio = true
-                                            KSOptions.canBackgroundPlay = true
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Toggle("自动画中画", isOn: $playerSettingModel.enableAutoPiPOnBackground)
+                                        .tint(.green)
+                                        .disabled(!pipSupported)
+                                        .onChange(of: playerSettingModel.enableAutoPiPOnBackground) { _, newValue in
+                                            if newValue && !playerSettingModel.enableBackgroundAudio {
+                                                playerSettingModel.enableBackgroundAudio = true
+                                                KSOptions.canBackgroundPlay = true
+                                            }
+                                            onAutoPiPChanged(newValue)
                                         }
-                                    }
+
+                                    Text(pipSupported
+                                         ? "开启后会自动启用后台播放"
+                                         : "当前内核（VLC4）暂不支持画中画")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
