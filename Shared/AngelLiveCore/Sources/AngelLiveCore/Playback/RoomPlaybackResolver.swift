@@ -395,7 +395,11 @@ public enum RoomPlaybackResolver {
 
         switch format {
         case .hlsLive:
-            return RoomPlaybackPlan(playerKinds: [.avPlayer], isHLS: true)
+            // 主路走 KSMEPlayer:统计面板 byteRate/networkSpeed 可读、rw_timeout 可控,
+            // 国外 CDN 卡第一帧场景下零吞吐 watchdog 才能生效。
+            // AV 作为兜底:KSPlayerLayer.finish 在 ME 报错时会自动按 playerTypes
+            // 顺序起下一个(KSPlayerLayer.swift:683),无需打开 isSecondOpen(那是"预开"开关)。
+            return RoomPlaybackPlan(playerKinds: [.mePlayer, .avPlayer], isHLS: true)
         case .hlsVod:
             return RoomPlaybackPlan(playerKinds: [.mePlayer], isHLS: false)
         case .flv, .dash, .unknown:

@@ -496,16 +496,27 @@ struct PlayerControlView: View {
         isFavoriteLoading = true
         defer { isFavoriteLoading = false }
 
+        let wasFavorited = isFavorited
         do {
-            if isFavorited {
+            if wasFavorited {
                 try await favoriteModel.removeFavoriteRoom(room: room)
             } else {
                 try await favoriteModel.addFavorite(room: room)
             }
             isFavoriteAnimating.toggle()
+            // 成功 Toast(跟平台详情页/列表入口对齐)
+            toastManager?.show(
+                icon: wasFavorited ? "heart.slash.fill" : "heart.fill",
+                message: wasFavorited ? "已取消收藏" : "收藏成功",
+                type: wasFavorited ? .info : .success
+            )
         } catch {
             let errorMessage = FavoriteService.formatErrorCode(error: error)
-            toastManager?.show(icon: "xmark.circle.fill", message: isFavorited ? "取消收藏失败：\(errorMessage)" : "收藏失败：\(errorMessage)", type: .error)
+            toastManager?.show(
+                icon: "xmark.circle.fill",
+                message: wasFavorited ? "取消收藏失败：\(errorMessage)" : "收藏失败：\(errorMessage)",
+                type: .error
+            )
             print("收藏操作失败: \(error)")
         }
     }
@@ -643,9 +654,16 @@ struct VideoSettingsPanel: View {
         }
     }
 
+    private var currentPlayerType: MediaPlayerProtocol.Type {
+        if let player = (resolvedPlayerLayer ?? coordinator.playerLayer)?.player {
+            return type(of: player)
+        }
+        return KSOptions.firstPlayerType
+    }
+
     private var streamInfoSection: some View {
         sectionCard(title: "当前流", systemImage: "dot.radiowaves.left.and.right") {
-            InfoRow(title: "播放方案", value: Self.playerDisplayName(for: KSOptions.firstPlayerType))
+            InfoRow(title: "播放方案", value: Self.playerDisplayName(for: currentPlayerType))
 
             if let normalizedQualityTitle {
                 InfoRow(title: "当前清晰度", value: normalizedQualityTitle)

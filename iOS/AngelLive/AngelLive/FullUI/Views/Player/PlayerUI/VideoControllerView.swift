@@ -640,9 +640,16 @@ struct VideoSettingHUDView: View {
         }
     }
 
+    private var currentPlayerType: MediaPlayerProtocol.Type {
+        if let player = model.config.playerLayer?.player {
+            return type(of: player)
+        }
+        return KSOptions.firstPlayerType
+    }
+
     private var streamInfoSection: some View {
         sectionCard(title: "当前流", systemImage: "dot.radiowaves.left.and.right") {
-            InfoRow(title: "播放方案", value: Self.playerDisplayName(for: KSOptions.firstPlayerType))
+            InfoRow(title: "播放方案", value: Self.playerDisplayName(for: currentPlayerType))
 
             if let normalizedQualityTitle {
                 InfoRow(title: "当前清晰度", value: normalizedQualityTitle)

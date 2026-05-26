@@ -81,9 +81,16 @@ struct TVPlayerStatisticsPanel: View {
         }
     }
 
+    private var currentPlayerType: MediaPlayerProtocol.Type {
+        if let player = playerCoordinator.playerLayer?.player {
+            return type(of: player)
+        }
+        return KSOptions.firstPlayerType
+    }
+
     private var streamInfoSection: some View {
         sectionCard(title: "当前流", systemImage: "dot.radiowaves.left.and.right") {
-            StatisticsRow(title: "播放方案", value: Self.playerDisplayName(for: KSOptions.firstPlayerType))
+            StatisticsRow(title: "播放方案", value: Self.playerDisplayName(for: currentPlayerType))
 
             if let qualityTitle, !qualityTitle.isEmpty {
                 StatisticsRow(title: "当前清晰度", value: qualityTitle)

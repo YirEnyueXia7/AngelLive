@@ -237,8 +237,12 @@ struct VerticalLiveControllerView: View {
             } else {
                 try await favoriteModel.addFavorite(room: viewModel.currentRoom)
             }
-            // 成功后触发动画
+            // 成功后触发动画 + Toast(跟列表入口对齐)
             isFavoriteAnimating.toggle()
+            presentToast(ToastValue(
+                icon: Image(systemName: wasFavorited ? "heart.slash.fill" : "heart.fill"),
+                message: wasFavorited ? "已取消收藏" : "收藏成功"
+            ))
         } catch {
             let errorMessage = FavoriteService.formatErrorCode(error: error)
             presentToast(ToastValue(

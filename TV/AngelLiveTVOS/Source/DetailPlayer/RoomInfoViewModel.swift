@@ -146,8 +146,9 @@ final class RoomInfoViewModel {
     init(currentRoom: LiveModel, appViewModel: AppState, enterFromLive: Bool, roomType: LiveRoomListType) {
         KSOptions.isAutoPlay = true
         KSOptions.isSecondOpen = true
-        KSOptions.firstPlayerType = KSAVPlayer.self
-        KSOptions.secondPlayerType = KSMEPlayer.self
+        // 新策略:主路 ME,AV 兜底。详见 RoomPlaybackResolver.resolvePlan(.hlsLive)。
+        KSOptions.firstPlayerType = KSMEPlayer.self
+        KSOptions.secondPlayerType = KSAVPlayer.self
         let option = PlayerOptions()
         option.userAgent = "libmpv"
         option.syncSystemRate = settingModel.syncSystemRate
@@ -645,8 +646,9 @@ extension RoomInfoViewModel: WebSocketConnectionDelegate {
         disConnectSocket()
         KSOptions.isAutoPlay = true
         KSOptions.isSecondOpen = true
-        KSOptions.firstPlayerType = KSAVPlayer.self
-        KSOptions.secondPlayerType = KSMEPlayer.self
+        // 新策略:主路 ME,AV 兜底。
+        KSOptions.firstPlayerType = KSMEPlayer.self
+        KSOptions.secondPlayerType = KSAVPlayer.self
         self.currentRoom = liveModel
         getPlayArgs()
     }

@@ -169,21 +169,25 @@ struct StreamerInfoView: View {
 
     @MainActor
     private func toggleFavorite() async {
+        let wasFavorited = isFavorited
         do {
-            if isFavorited {
+            if wasFavorited {
                 try await favoriteModel.removeFavoriteRoom(room: viewModel.currentRoom)
             } else {
                 try await favoriteModel.addFavorite(room: viewModel.currentRoom)
             }
-            // 成功后触发动画
+            // 成功后触发动画 + Toast(跟列表入口对齐)
             isFavoriteAnimating.toggle()
+            presentToast(ToastValue(
+                icon: Image(systemName: wasFavorited ? "heart.slash.fill" : "heart.fill"),
+                message: wasFavorited ? "已取消收藏" : "收藏成功"
+            ))
         } catch {
             let errorMessage = FavoriteService.formatErrorCode(error: error)
-            let toast = ToastValue(
+            presentToast(ToastValue(
                 icon: Image(systemName: "xmark.circle.fill"),
-                message: isFavorited ? "取消收藏失败：\(errorMessage)" : "收藏失败：\(errorMessage)"
-            )
-            presentToast(toast)
+                message: wasFavorited ? "取消收藏失败：\(errorMessage)" : "收藏失败：\(errorMessage)"
+            ))
             print("收藏操作失败: \(error)")
         }
     }

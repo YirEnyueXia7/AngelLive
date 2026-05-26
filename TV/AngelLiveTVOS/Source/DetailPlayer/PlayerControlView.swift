@@ -773,23 +773,29 @@ struct PlayerControlView: View {
     
     func favoriteAction() {
         roomInfoViewModel.currentRoomLikeLoading = true
-        if appViewModel.favoriteViewModel.roomList.contains(where: { roomInfoViewModel.currentRoom == $0 }) == false {
-            Task {
-                roomInfoViewModel.currentRoom.liveState = try await ApiManager.getCurrentRoomLiveState(roomId: roomInfoViewModel.currentRoom.roomId, userId: roomInfoViewModel.currentRoom.userId, liveType: roomInfoViewModel.currentRoom.liveType).rawValue
-                try await appViewModel.favoriteViewModel.addFavorite(room: roomInfoViewModel.currentRoom)
-                roomInfoViewModel.currentRoomIsLiked = true
-                roomInfoViewModel.showToast(true, title: "收藏成功")
-                roomInfoViewModel.currentRoomLikeLoading = false
+        let isAdding = appViewModel.favoriteViewModel.roomList.contains(where: { roomInfoViewModel.currentRoom == $0 }) == false
+        Task { @MainActor in
+            defer { roomInfoViewModel.currentRoomLikeLoading = false }
+            do {
+                if isAdding {
+                    roomInfoViewModel.currentRoom.liveState = try await ApiManager.getCurrentRoomLiveState(
+                        roomId: roomInfoViewModel.currentRoom.roomId,
+                        userId: roomInfoViewModel.currentRoom.userId,
+                        liveType: roomInfoViewModel.currentRoom.liveType
+                    ).rawValue
+                    try await appViewModel.favoriteViewModel.addFavorite(room: roomInfoViewModel.currentRoom)
+                    roomInfoViewModel.currentRoomIsLiked = true
+                    roomInfoViewModel.showToast(true, title: "收藏成功")
+                } else {
+                    try await appViewModel.favoriteViewModel.removeFavoriteRoom(room: roomInfoViewModel.currentRoom)
+                    appViewModel.favoriteViewModel.roomList.removeAll(where: { $0.roomId == roomInfoViewModel.currentRoom.roomId })
+                    roomInfoViewModel.currentRoomIsLiked = false
+                    roomInfoViewModel.showToast(true, title: "取消收藏成功")
+                }
                 TopShelfManager.notifyContentChanged()
-            }
-        }else {
-            Task {
-                try await  appViewModel.favoriteViewModel.removeFavoriteRoom(room: roomInfoViewModel.currentRoom)
-                appViewModel.favoriteViewModel.roomList.removeAll(where: { $0.roomId == roomInfoViewModel.currentRoom.roomId })
-                roomInfoViewModel.currentRoomIsLiked = false
-                roomInfoViewModel.showToast(true, title: "取消收藏成功")
-                roomInfoViewModel.currentRoomLikeLoading = false
-                TopShelfManager.notifyContentChanged()
+            } catch {
+                let detail = FavoriteService.formatErrorCode(error: error)
+                roomInfoViewModel.showToast(false, title: isAdding ? "收藏失败：\(detail)" : "取消收藏失败：\(detail)")
             }
         }
     }
