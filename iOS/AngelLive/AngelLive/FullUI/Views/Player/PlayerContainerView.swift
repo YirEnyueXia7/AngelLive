@@ -669,8 +669,11 @@ struct PlayerContentView: View {
         }
     }
 
-    /// 起播超时兜底:8s 内 viewModel.isPlaying 没翻 true 就自动 refreshPlayback 一次。
+    /// 起播超时兜底:URL 已设但长时间没起播,且网络也没在动,才 refreshPlayback 一次。
     /// .task(id:) 在 currentPlayURL 变化时自动 cancel 旧 task 重起。
+    ///
+    /// 关键判定:除了 isPlaying,还要看 bytesRead 这段时间是否推进 —— 弱网时 player 正在缓冲、
+    /// bytes 在流,只是没翻 isPlaying,此时 refresh 会 kill 现有连接重来,体验比等更糟。
     @MainActor
     private func runStartupWatchdog() async {
         guard let url = viewModel.currentPlayURL else { return }
@@ -683,8 +686,11 @@ struct PlayerContentView: View {
         guard !watchdogRetried else { return }
         if viewModel.isPlaying { return }
 
+        // sleep 前采样 bytesRead 作为"网络是否在动"的基线。
+        let startBytes = playerCoordinator.playerLayer?.player.dynamicInfo.bytesRead ?? 0
+
         do {
-            try await Task.sleep(nanoseconds: 8_000_000_000)
+            try await Task.sleep(nanoseconds: 12_000_000_000)
         } catch {
             return
         }
@@ -693,13 +699,29 @@ struct PlayerContentView: View {
               viewModel.currentPlayURL == url,
               !viewModel.isPlaying else { return }
 
+        // 弱网保护:bytes 在推进就说明 IO 还活着,把后续判定交给 stall watchdog
+        // (它有 bytes+playhead 双信号,粒度更细)。这里直接标记 retried 收工,
+        // 避免后续 URL token 滚动时被同一个 watchdog 再次误触发。
+        let endBytes = playerCoordinator.playerLayer?.player.dynamicInfo.bytesRead ?? 0
+        if endBytes > startBytes + Self.watchdogBytesProgressThreshold {
+            watchdogRetried = true
+            Logger.debug(
+                "[PlayerFlow] watchdog: iOS 12s 内 bytes 推进 \(endBytes - startBytes)B,跳过 refresh url=\(compactURL(url))",
+                category: .player
+            )
+            return
+        }
+
         watchdogRetried = true
         Logger.debug(
-            "[PlayerFlow] watchdog: iOS 起播 8s 超时,自动 refreshPlayback url=\(compactURL(url))",
+            "[PlayerFlow] watchdog: iOS 起播 12s 超时(bytesRead 无推进),refreshPlayback url=\(compactURL(url))",
             category: .player
         )
         viewModel.refreshPlayback()
     }
+
+    /// bytesRead 推进阈值:大于 16KB 才算"在动",过滤握手期的小包/重定向。
+    private static let watchdogBytesProgressThreshold: Int64 = 16 * 1024
 
     private func compactURL(_ url: URL?) -> String {
         guard let url else { return "nil" }
