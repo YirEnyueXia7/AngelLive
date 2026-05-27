@@ -82,13 +82,18 @@ struct TVShellConfigView: View {
             .padding(80)
             .safeAreaPadding()
         }
-        .onChange(of: appViewModel.remoteInputService.lastEvent?.value) {
+        .onChange(of: appViewModel.remoteInputService.lastEvent?.id) {
             guard let event = appViewModel.remoteInputService.lastEvent else { return }
             switch event.field {
-            case .title: inputTitle = event.value
-            case .url:   inputURL = event.value
-            case .search: break
-            case .cookie: break
+            case .title:
+                inputTitle = event.value
+            case .url:
+                inputURL = event.value
+            case .config:
+                if let url = event.url { inputURL = url }
+                if let title = event.title { inputTitle = title }
+            case .search, .cookie:
+                break
             }
         }
     }

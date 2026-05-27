@@ -583,7 +583,7 @@ struct PlatformManualInputPageView: View {
         .onExitCommand {
             onBack()
         }
-        .onChange(of: appViewModel.remoteInputService.lastEvent?.value) {
+        .onChange(of: appViewModel.remoteInputService.lastEvent?.id) {
             guard let event = appViewModel.remoteInputService.lastEvent,
                   event.field == .cookie else { return }
             cookieInput = event.value

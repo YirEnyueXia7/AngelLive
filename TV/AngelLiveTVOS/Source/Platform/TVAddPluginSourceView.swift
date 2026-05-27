@@ -74,10 +74,15 @@ struct TVAddPluginSourceView: View {
             .padding(80)
             .safeAreaPadding()
         }
-        .onChange(of: appViewModel.remoteInputService.lastEvent?.value) {
+        .onChange(of: appViewModel.remoteInputService.lastEvent?.id) {
             guard let event = appViewModel.remoteInputService.lastEvent else { return }
-            if event.field == .url {
+            switch event.field {
+            case .url:
                 inputURL = event.value
+            case .config:
+                if let url = event.url { inputURL = url }
+            case .title, .search, .cookie:
+                break
             }
         }
         .onExitCommand {

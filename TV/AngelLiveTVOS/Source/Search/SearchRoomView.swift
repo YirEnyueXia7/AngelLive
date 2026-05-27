@@ -117,7 +117,7 @@ struct SearchRoomView: View {
         .onPlayPauseCommand(perform: {
             liveViewModel.getRoomList(index: 1)
         })
-        .onChange(of: appViewModel.remoteInputService.lastEvent?.value) {
+        .onChange(of: appViewModel.remoteInputService.lastEvent?.id) {
             guard let event = appViewModel.remoteInputService.lastEvent,
                   event.field == .search else { return }
             appModel.searchViewModel.searchText = event.value

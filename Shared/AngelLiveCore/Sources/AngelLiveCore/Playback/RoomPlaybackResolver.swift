@@ -395,14 +395,16 @@ public enum RoomPlaybackResolver {
 
         switch format {
         case .hlsLive:
-            // 主路走 KSMEPlayer:统计面板 byteRate/networkSpeed 可读、rw_timeout 可控,
-            // 国外 CDN 卡第一帧场景下零吞吐 watchdog 才能生效。
-            // AV 作为兜底:KSPlayerLayer.finish 在 ME 报错时会自动按 playerTypes
-            // 顺序起下一个(KSPlayerLayer.swift:683),无需打开 isSecondOpen(那是"预开"开关)。
-            return RoomPlaybackPlan(playerKinds: [.mePlayer, .avPlayer], isHLS: true)
+            // 主路走 KSAVPlayer:AVFoundation 原生 HLS 兼容性最好,
+            // 部分平台(国内某些 CDN)的 m3u8 用 KSMEPlayer/FFmpeg 解析会卡第一帧或报错。
+            // KSMEPlayer 作为兜底:KSPlayerLayer.finish 在 AV 报错时会按 playerTypes
+            // 顺序起下一个(KSPlayerLayer.swift:683),覆盖罕见的"AV 拒收 HLS"场景。
+            // 代价是 byteRate/networkSpeed 统计在 AV 路径下读不到,接受这个权衡。
+            return RoomPlaybackPlan(playerKinds: [.avPlayer, .mePlayer], isHLS: true)
         case .hlsVod:
             return RoomPlaybackPlan(playerKinds: [.mePlayer], isHLS: false)
         case .flv, .dash, .unknown:
+            // FLV/DASH/未知 协议 AV 不能直接解,固定走 KSMEPlayer。
             return RoomPlaybackPlan(playerKinds: [.mePlayer], isHLS: false)
         }
     }

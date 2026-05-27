@@ -53,7 +53,16 @@ public struct CacheMaintenanceService: Sendable {
 
     /// 清理 URLCache.shared 磁盘缓存与 tmp/ 临时文件。
     public static func clearURLCacheAndTmp() {
-        URLCache.shared.removeAllCachedResponses()
+        // removeAllCachedResponses() 是异步的,currentDiskUsage 不会立刻归零。
+        // 把 capacity 临时设回 0 再恢复,可强制刷新内部计数,避免设置页"首次点击清除后大小不变"的体验问题。
+        let cache = URLCache.shared
+        let originalDisk = cache.diskCapacity
+        let originalMemory = cache.memoryCapacity
+        cache.removeAllCachedResponses()
+        cache.diskCapacity = 0
+        cache.memoryCapacity = 0
+        cache.diskCapacity = originalDisk
+        cache.memoryCapacity = originalMemory
 
         let fm = FileManager.default
         let tmp = fm.temporaryDirectory
