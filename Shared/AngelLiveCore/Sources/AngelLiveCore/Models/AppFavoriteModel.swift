@@ -70,6 +70,7 @@ public final class AppFavoriteModel {
     }
 
     /// 合并本地与云端(union,云端优先以保留新鲜直播状态;不丢离线新增)。
+    /// Phase③ 接入 CKSyncEngine 后,跨设备成员合并由引擎负责,此方法保留备用。
     private func mergeLocalAndCloud(local: [LiveModel], cloud: [LiveModel]) -> [LiveModel] {
         var merged = cloud
         let cloudKeys = Set(cloud.map { AppFavoriteModel.favoriteUniqueKey(for: $0) })
@@ -77,6 +78,42 @@ public final class AppFavoriteModel {
             merged.append(item)
         }
         return merged
+    }
+
+    // MARK: - Phase③ CKSyncEngine 接入
+
+    private var cloudSyncStarted = false
+
+    /// 启动收藏同步引擎(幂等):设回调 + 启动 + 首次默认 Zone 迁移。仅在 iCloud 开启时调用。
+    @MainActor
+    private func startCloudSyncIfNeeded() {
+        guard !cloudSyncStarted else { return }
+        cloudSyncStarted = true
+        FavoriteSyncEngine.shared.onRemoteChange = { [weak self] in
+            await self?.reloadFromLocalAfterRemoteChange()
+        }
+        FavoriteSyncEngine.shared.start()
+        Task { await FavoriteSyncEngine.shared.migrateFromDefaultZoneIfNeeded() }
+    }
+
+    /// 引擎拉到远端成员变更后:用本地真相刷新列表(直播状态下次刷新时更新)。
+    @MainActor
+    private func reloadFromLocalAfterRemoteChange() async {
+        let local = await FavoriteLocalStore.shared.load()
+        applyRoomList(local)
+    }
+
+    /// 对给定成员刷新直播状态并应用 + 回写本地。
+    @MainActor
+    private func refreshStatesAndApply(members: [LiveModel]) async {
+        guard !members.isEmpty else {
+            applyRoomList([])
+            return
+        }
+        if let resp = try? await actor.syncStreamerLiveStates(members: members) {
+            applyRoomList(resp.0)
+            persistLocal()
+        }
     }
 
     /// 判断是否需要同步数据
@@ -125,8 +162,9 @@ public final class AppFavoriteModel {
         self.isLoading = roomList.isEmpty
         self.syncStatus = .syncing
 
-        // iCloud 关闭:纯本地,不触碰 CloudKit。
+        // iCloud 关闭:纯本地,只刷新直播状态。
         guard favoriteICloudSyncEnabled else {
+            await refreshStatesAndApply(members: local)
             isLoading = false
             cloudKitReady = false
             syncStatus = .success
@@ -135,31 +173,24 @@ public final class AppFavoriteModel {
             return
         }
 
+        // 启动引擎(幂等)+ 拉一次云端变更进本地真相(CKSyncEngine 负责跨设备成员合并)。
+        startCloudSyncIfNeeded()
         let state = await actor.getState()
         self.cloudKitReady = state.0
         self.cloudKitStateString = state.1
+        if cloudKitReady {
+            await FavoriteSyncEngine.shared.fetchChanges()
+        }
 
-        if self.cloudKitReady {
-            do {
-                let resp = try await actor.syncStreamerLiveStates()
-                // 合并本地与云端,避免冲掉离线新增;再回写本地。
-                let merged = mergeLocalAndCloud(local: local, cloud: resp.0)
-                applyRoomList(merged)
-                persistLocal()
-                syncProgressInfo = ("", "", "", 0, 0)
-                isLoading = false
-                syncStatus = .success
-                lastSyncTime = Date() // 记录同步时间
-                lastSyncError = nil
-            } catch {
-                // 云端失败:保留本地展示,不清空。
-                self.cloudKitStateString = "获取收藏列表失败：" + FavoriteService.formatErrorCode(error: error)
-                self.lastSyncError = SyncError.from(error)
-                syncProgressInfo = ("", "", "", 0, 0)
-                isLoading = false
-                cloudReturnError = true
-                syncStatus = .error
-            }
+        // 用本地真相(引擎可能已更新)刷新直播状态并应用。
+        let current = await FavoriteLocalStore.shared.load()
+        await refreshStatesAndApply(members: current)
+        syncProgressInfo = ("", "", "", 0, 0)
+        isLoading = false
+        if cloudKitReady {
+            syncStatus = .success
+            lastSyncTime = Date()
+            lastSyncError = nil
         } else {
             let stateStr = await FavoriteService.getCloudState()
             if stateStr == "无法确定状态" {
@@ -167,8 +198,6 @@ public final class AppFavoriteModel {
             } else {
                 self.cloudKitStateString = stateStr
             }
-            syncProgressInfo = ("", "", "", 0, 0)
-            isLoading = false
             cloudReturnError = true
             syncStatus = .notLoggedIn
         }
@@ -191,9 +220,9 @@ public final class AppFavoriteModel {
 
         let local = await FavoriteLocalStore.shared.load()
 
-        // iCloud 关闭:纯本地刷新。
+        // iCloud 关闭:纯本地刷新直播状态。
         guard favoriteICloudSyncEnabled else {
-            if !local.isEmpty { applyRoomList(local) }
+            await refreshStatesAndApply(members: local)
             cloudKitReady = false
             syncStatus = .success
             cloudKitStateString = "iCloud 同步已关闭(仅本地)"
@@ -201,26 +230,20 @@ public final class AppFavoriteModel {
             return
         }
 
+        startCloudSyncIfNeeded()
         let state = await actor.getState()
         self.cloudKitReady = state.0
         self.cloudKitStateString = state.1
+        if cloudKitReady {
+            await FavoriteSyncEngine.shared.fetchChanges()
+        }
 
-        if self.cloudKitReady {
-            do {
-                let resp = try await actor.syncStreamerLiveStates()
-                // 合并本地与云端,不清空;再回写本地。
-                let merged = mergeLocalAndCloud(local: local, cloud: resp.0)
-                applyRoomList(merged)
-                persistLocal()
-                syncStatus = .success
-                lastSyncTime = Date()
-                lastSyncError = nil
-            } catch {
-                self.cloudKitStateString = "获取收藏列表失败：" + FavoriteService.formatErrorCode(error: error)
-                self.lastSyncError = SyncError.from(error)
-                cloudReturnError = true
-                syncStatus = .error
-            }
+        let current = await FavoriteLocalStore.shared.load()
+        await refreshStatesAndApply(members: current)
+        if cloudKitReady {
+            syncStatus = .success
+            lastSyncTime = Date()
+            lastSyncError = nil
         } else {
             let stateStr = await FavoriteService.getCloudState()
             if stateStr == "无法确定状态" {
@@ -302,15 +325,11 @@ public final class AppFavoriteModel {
         listVersion &+= 1
         persistLocal()
 
-        // 云端同步(非阻塞):关闭则跳过;失败仅记 lastSyncError,不回滚本地。
+        // 云端同步(非阻塞):交给 CKSyncEngine 入队,引擎自带退避/续传。
         if favoriteICloudSyncEnabled {
-            do {
-                try await FavoriteService.saveRecord(liveModel: room)
-                lastSyncError = nil
-            } catch {
-                lastSyncError = SyncError.from(error)
-                Logger.warning("收藏已存本地,但同步到 iCloud 失败: \(lastSyncError?.displayText ?? "")", category: .general)
-            }
+            startCloudSyncIfNeeded()
+            FavoriteSyncEngine.shared.enqueueSave(room)
+            lastSyncError = nil
         }
 
         PluginConsoleService.shared.updateStatus(
@@ -340,15 +359,11 @@ public final class AppFavoriteModel {
         listVersion &+= 1
         persistLocal()
 
-        // 云端删除(非阻塞):关闭则跳过;失败仅记 lastSyncError,不回滚本地删除。
+        // 云端删除(非阻塞):交给 CKSyncEngine 入队。
         if favoriteICloudSyncEnabled {
-            do {
-                try await FavoriteService.deleteRecord(liveModel: room)
-                lastSyncError = nil
-            } catch {
-                lastSyncError = SyncError.from(error)
-                Logger.warning("收藏已从本地删除,但 iCloud 删除失败: \(lastSyncError?.displayText ?? "")", category: .general)
-            }
+            startCloudSyncIfNeeded()
+            FavoriteSyncEngine.shared.enqueueDelete(room)
+            lastSyncError = nil
         }
 
         PluginConsoleService.shared.updateStatus(

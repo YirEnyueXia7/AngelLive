@@ -78,6 +78,9 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
             delegate: self
         )
         engine = CKSyncEngine(config)
+        // 不确定点①(已主动处理):显式确保自定义 Zone 存在(幂等),不依赖隐式创建。
+        // 若真机验证发现 CKSyncEngine 会自动建 Zone 导致重复,可移除此行。
+        engine?.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
         Logger.info("FavoriteSyncEngine 已启动", category: .general)
     }
 
@@ -110,6 +113,9 @@ public final class FavoriteSyncEngine: @unchecked Sendable {
     }
 
     private func makeRecord(room: LiveModel, recordID: CKRecord.ID) -> CKRecord {
+        // 不确定点②:此处新建 CKRecord(不带服务端 system fields)。收藏以增/删为主,
+        // 极少更新同一记录,故冲突概率低。若真机出现 serverRecordChanged,需缓存
+        // sentRecordZoneChanges 回传的服务端记录、在此复用其 recordChangeTag。
         let rec = CKRecord(recordType: Self.recordType, recordID: recordID)
         rec["room_id"] = room.roomId as CKRecordValue
         rec["user_id"] = room.userId as CKRecordValue

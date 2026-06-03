@@ -23,7 +23,10 @@ public actor FavoriteStateModel {
 
     public init() {}
 
-    public func syncStreamerLiveStates() async throws -> ([LiveModel], [FavoriteLiveSectionModel]) {
+    /// 刷新收藏的直播状态。
+    /// - Parameter members: 成员列表来源。Phase③ 由上层传入本地真相(CKSyncEngine 已同步);
+    ///   传 nil 时回退到旧行为(从默认 Zone 拉取),保留向后兼容。
+    public func syncStreamerLiveStates(members: [LiveModel]? = nil) async throws -> ([LiveModel], [FavoriteLiveSectionModel]) {
         let overallStart = CFAbsoluteTimeGetCurrent()
         let consoleEntryId = await MainActor.run {
             PluginConsoleService.shared.log(tag: "FavoriteSync", method: "syncAll", status: .loading)
@@ -46,22 +49,28 @@ public actor FavoriteStateModel {
         defer { isSyncing = false }
 
         var roomList: [LiveModel] = []
-        do {
-            let cloudStart = CFAbsoluteTimeGetCurrent()
-            roomList = try await FavoriteService.searchRecord()
-            roomList = deduplicateFavoriteRooms(roomList)
-            let cloudDuration = CFAbsoluteTimeGetCurrent() - cloudStart
-            favoriteSyncLog("CloudKit fetched \(roomList.count) favorites in \(formatSeconds(cloudDuration))s")
-        } catch {
-            await MainActor.run {
-                PluginConsoleService.shared.updateStatus(
-                    id: consoleEntryId,
-                    status: .error,
-                    duration: CFAbsoluteTimeGetCurrent() - overallStart,
-                    errorMessage: "CloudKit 拉取收藏失败: \(error.localizedDescription)"
-                )
+        if let members {
+            // Phase③:成员来自本地真相(CKSyncEngine 已同步),不再拉默认 Zone。
+            roomList = deduplicateFavoriteRooms(members)
+            favoriteSyncLog("使用本地成员 \(roomList.count) 条(引擎已同步)")
+        } else {
+            do {
+                let cloudStart = CFAbsoluteTimeGetCurrent()
+                roomList = try await FavoriteService.searchRecord()
+                roomList = deduplicateFavoriteRooms(roomList)
+                let cloudDuration = CFAbsoluteTimeGetCurrent() - cloudStart
+                favoriteSyncLog("CloudKit fetched \(roomList.count) favorites in \(formatSeconds(cloudDuration))s")
+            } catch {
+                await MainActor.run {
+                    PluginConsoleService.shared.updateStatus(
+                        id: consoleEntryId,
+                        status: .error,
+                        duration: CFAbsoluteTimeGetCurrent() - overallStart,
+                        errorMessage: "CloudKit 拉取收藏失败: \(error.localizedDescription)"
+                    )
+                }
+                throw error
             }
-            throw error
         }
         let cloudFetchedCount = roomList.count
         await MainActor.run {
