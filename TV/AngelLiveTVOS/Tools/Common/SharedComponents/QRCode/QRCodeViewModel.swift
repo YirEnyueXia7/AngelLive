@@ -100,7 +100,7 @@ class QRCodeViewModel {
                         try await appViewModel.favoriteViewModel.removeFavoriteRoom(room: room)
                         fullScreenSyncState = "成功"
                     }catch {
-                        fullScreenSyncState = "失败:\(error.localizedDescription)"
+                        fullScreenSyncState = "失败:\(SyncError.from(error).displayText)"
                     }
                 }
             }
@@ -114,7 +114,7 @@ class QRCodeViewModel {
                         fullScreenSyncState = "添加至iCloud: \(index + 1) / \(roomList.count)"
                         try await appViewModel.favoriteViewModel.addFavorite(room: newRoom)
                     }catch {
-                        fullScreenSyncState = "失败:\(error.localizedDescription)"
+                        fullScreenSyncState = "失败:\(SyncError.from(error).displayText)"
                     }
                 }
             }

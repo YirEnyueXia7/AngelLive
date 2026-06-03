@@ -25,6 +25,8 @@ struct AccountManagementView: View {
     @State private var isFetchingPreview = false
     @State private var isClearingCloudLoginInfo = false
     @State private var clearResultMessage: String?
+    @State private var iCloudSyncResultMessage: String?
+    @State private var iCloudSyncResultSuccess = false
 
     enum AccountPage: Equatable {
         case main
@@ -141,6 +143,18 @@ struct AccountManagementView: View {
                 }
                 .disabled(isFetchingPreview)
 
+                if let syncResult = iCloudSyncResultMessage {
+                    HStack(spacing: 15) {
+                        Image(systemName: iCloudSyncResultSuccess ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(iCloudSyncResultSuccess ? .green : .red)
+                        Text(syncResult)
+                            .font(.system(size: 28))
+                            .foregroundStyle(iCloudSyncResultSuccess ? .green : .red)
+                        Spacer()
+                    }
+                    .padding(.vertical, 5)
+                }
+
                 Button(role: .destructive) {
                     showClearCloudConfirm = true
                 } label: {
@@ -196,7 +210,10 @@ struct AccountManagementView: View {
             Button("取消", role: .cancel) {}
             Button("确定上传") {
                 Task {
-                    await syncService.syncAllToICloud()
+                    let outcome = await syncService.syncAllToICloud()
+                    await MainActor.run {
+                        applySyncOutcome(outcome, successMessage: "已同步到 iCloud")
+                    }
                 }
             }
         } message: {
@@ -206,7 +223,10 @@ struct AccountManagementView: View {
             Button("取消", role: .cancel) {}
             Button("确定下载") {
                 Task {
-                    await syncService.syncAllFromICloud()
+                    let outcome = await syncService.syncAllFromICloud()
+                    await MainActor.run {
+                        applySyncOutcome(outcome, successMessage: "已从 iCloud 同步到本地")
+                    }
                 }
             }
         } message: {
@@ -219,6 +239,21 @@ struct AccountManagementView: View {
             }
         } message: {
             Text("确定要清理 iCloud 中保存的所有平台登录信息吗？此操作不会退出本机账号，但其他设备将无法再从 iCloud 下载这些登录信息。")
+        }
+    }
+
+    /// 按同步结果展示明确反馈:成功 / 部分失败 / 失败(原因 + 错误码)。
+    private func applySyncOutcome(_ outcome: OperationOutcome, successMessage: String) {
+        switch outcome {
+        case .success:
+            iCloudSyncResultMessage = successMessage
+            iCloudSyncResultSuccess = true
+        case .partial(let error):
+            iCloudSyncResultMessage = "部分同步失败：\(error.displayText)"
+            iCloudSyncResultSuccess = false
+        case .failure(let error):
+            iCloudSyncResultMessage = "同步失败：\(error.displayText)"
+            iCloudSyncResultSuccess = false
         }
     }
 

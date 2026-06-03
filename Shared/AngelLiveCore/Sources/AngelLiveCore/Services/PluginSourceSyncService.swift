@@ -47,8 +47,10 @@ public final class PluginSourceSyncService {
 
     // MARK: - 写入 CloudKit（静态方法，供 PluginSourceManager 调用）
 
-    /// 将插件源 URL 列表同步到 CloudKit
-    public static func syncToCloudStatic(sourceURLs: [String]) async {
+    /// 将插件源 URL 列表同步到 CloudKit。
+    /// 返回结构化结果(错误带码 + 建议),便于调用方/后续 UI 展示;失败不再被静默吞掉。
+    @discardableResult
+    public static func syncToCloudStatic(sourceURLs: [String]) async -> OperationOutcome {
         let container = CKContainer(identifier: CloudPluginSourceFields.containerIdentifier)
         let database = container.privateCloudDatabase
         let recordID = CKRecord.ID(recordName: CloudPluginSourceFields.fixedRecordName)
@@ -60,9 +62,11 @@ public final class PluginSourceSyncService {
             } catch let error as CKError where error.code == .unknownItem {
                 // 记录本就不存在，忽略
             } catch {
-                Logger.warning("删除云端插件源记录失败: \(error.localizedDescription)", category: .plugin)
+                let syncError = SyncError.from(error)
+                Logger.warning("删除云端插件源记录失败: \(syncError.displayText)", category: .plugin)
+                return .failure(syncError)
             }
-            return
+            return .success
         }
 
         // 尝试先获取已有记录（避免冲突），失败则新建
@@ -79,8 +83,11 @@ public final class PluginSourceSyncService {
         do {
             try await database.save(record)
             Logger.info("已同步 \(sourceURLs.count) 个插件源 URL 到 CloudKit", category: .plugin)
+            return .success
         } catch {
-            Logger.warning("同步插件源到 CloudKit 失败: \(error.localizedDescription)", category: .plugin)
+            let syncError = SyncError.from(error)
+            Logger.warning("同步插件源到 CloudKit 失败: \(syncError.displayText)", category: .plugin)
+            return .failure(syncError)
         }
     }
 

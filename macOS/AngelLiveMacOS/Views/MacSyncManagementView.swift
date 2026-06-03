@@ -165,10 +165,9 @@ struct MacSyncManagementView: View {
             Button("取消", role: .cancel) {}
             Button("确定上传") {
                 Task {
-                    await syncService.syncAllToICloud()
+                    let outcome = await syncService.syncAllToICloud()
                     await MainActor.run {
-                        iCloudSyncResult = "已同步到 iCloud"
-                        iCloudSyncSuccess = true
+                        applySyncOutcome(outcome, successMessage: "已同步到 iCloud")
                     }
                 }
             }
@@ -179,10 +178,9 @@ struct MacSyncManagementView: View {
             Button("取消", role: .cancel) {}
             Button("确定下载") {
                 Task {
-                    await syncService.syncAllFromICloud()
+                    let outcome = await syncService.syncAllFromICloud()
                     await MainActor.run {
-                        iCloudSyncResult = "已从 iCloud 同步到本地"
-                        iCloudSyncSuccess = true
+                        applySyncOutcome(outcome, successMessage: "已从 iCloud 同步到本地")
                     }
                 }
             }
@@ -369,6 +367,21 @@ struct MacSyncManagementView: View {
             showImportResult = true
         } catch {
             importErrorMessage = error.localizedDescription
+        }
+    }
+
+    /// 按同步结果展示明确反馈:成功 / 部分失败 / 失败(原因 + 错误码)。
+    private func applySyncOutcome(_ outcome: OperationOutcome, successMessage: String) {
+        switch outcome {
+        case .success:
+            iCloudSyncResult = successMessage
+            iCloudSyncSuccess = true
+        case .partial(let error):
+            iCloudSyncResult = "部分同步失败：\(error.displayText)"
+            iCloudSyncSuccess = false
+        case .failure(let error):
+            iCloudSyncResult = "同步失败：\(error.displayText)"
+            iCloudSyncSuccess = false
         }
     }
 

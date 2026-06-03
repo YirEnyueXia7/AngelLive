@@ -79,6 +79,8 @@ public final class PlatformCredentialSyncService: ObservableObject {
     // MARK: - Published Properties
 
     @Published public var isSyncing = false
+    /// 最近一次 iCloud 同步的错误(成功后置 nil),供页面展示「原因 + 错误码」。
+    @Published public var lastSyncError: SyncError?
     @Published public var iCloudSyncEnabled: Bool {
         didSet {
             UserDefaults.standard.set(iCloudSyncEnabled, forKey: Keys.iCloudSyncEnabled)
@@ -167,8 +169,13 @@ public final class PlatformCredentialSyncService: ObservableObject {
 
     // MARK: - iCloud 同步 (CloudKit)
 
-    /// 同步所有已认证平台到 CloudKit
-    public func syncAllToICloud() async {
+    /// 同步所有已认证平台到 CloudKit。
+    /// 返回明确结果(成功 / 部分失败 / 失败),并写入 `lastSyncError` 供页面展示。
+    @discardableResult
+    public func syncAllToICloud() async -> OperationOutcome {
+        isSyncing = true
+        defer { isSyncing = false }
+
         let sessions = await collectAllPlatformSessions()
         let sessionsByPluginId: [String: SyncedCookieData] = sessions.reduce(into: [:]) { result, session in
             guard let pluginId = session.platformId else { return }
@@ -181,6 +188,8 @@ public final class PlatformCredentialSyncService: ObservableObject {
         // 获取现有所有 cloudRecord 的 pluginId 列表
         let allPluginIds = Set(sessionsByPluginId.keys)
             .union(await knownCloudPluginIds())
+
+        var failures: [SyncError] = []
 
         for pluginId in allPluginIds {
             let recordName = CloudCookieFields.sessionRecordName(for: pluginId)
@@ -200,7 +209,9 @@ public final class PlatformCredentialSyncService: ObservableObject {
                 do {
                     try await database.save(record)
                 } catch {
-                    Logger.warning("同步 \(pluginId) session 到 CloudKit 失败: \(error.localizedDescription)", category: .general)
+                    let syncError = SyncError.from(error)
+                    failures.append(syncError)
+                    Logger.warning("同步 \(pluginId) session 到 CloudKit 失败: \(syncError.displayText)", category: .general)
                 }
             } else {
                 // 无 session，删除云端记录
@@ -209,16 +220,27 @@ public final class PlatformCredentialSyncService: ObservableObject {
                 } catch let error as CKError where error.code == .unknownItem {
                     // 不存在则忽略
                 } catch {
-                    Logger.warning("删除 CloudKit session 失败 (\(pluginId)): \(error.localizedDescription)", category: .general)
+                    let syncError = SyncError.from(error)
+                    failures.append(syncError)
+                    Logger.warning("删除 CloudKit session 失败 (\(pluginId)): \(syncError.displayText)", category: .general)
                 }
             }
         }
-        recordICloudSyncTime()
-        Logger.info("已同步 \(sessions.count) 个平台 session 到 CloudKit", category: .general)
+
+        let outcome = makeOutcome(failures: failures, total: allPluginIds.count, failedTitle: "部分平台登录信息同步失败")
+        lastSyncError = outcome.error
+        if outcome.isSuccess {
+            recordICloudSyncTime()
+            Logger.info("已同步 \(sessions.count) 个平台 session 到 CloudKit", category: .general)
+        }
+        return outcome
     }
 
-    /// 从 CloudKit 同步所有平台
-    public func syncAllFromICloud() async {
+    /// 从 CloudKit 同步所有平台。
+    /// 返回明确结果并写入 `lastSyncError`。「记录不存在」视为正常跳过,不计入失败;
+    /// 网络/权限等错误才计入。
+    @discardableResult
+    public func syncAllFromICloud() async -> OperationOutcome {
         isSyncing = true
         defer { isSyncing = false }
 
@@ -229,6 +251,8 @@ public final class PlatformCredentialSyncService: ObservableObject {
 
         // 查询所有 cookie_sessions 记录
         let knownIds = await knownCloudPluginIds()
+        var failures: [SyncError] = []
+
         for pluginId in knownIds {
             let recordName = CloudCookieFields.sessionRecordName(for: pluginId)
             let recordID = CKRecord.ID(recordName: recordName)
@@ -256,12 +280,37 @@ public final class PlatformCredentialSyncService: ObservableObject {
                     source: .iCloud,
                     validateBeforeSave: true
                 )
+            } catch let error as CKError where error.code == .unknownItem {
+                // 该平台无云端记录，正常跳过
             } catch {
-                // 该平台无云端记录或获取失败，跳过
+                // 网络/权限等错误,计入失败
+                failures.append(SyncError.from(error))
             }
         }
-        recordICloudSyncTime()
+
+        let outcome = makeOutcome(failures: failures, total: knownIds.count, failedTitle: "部分平台登录信息下载失败")
+        lastSyncError = outcome.error
+        if outcome.isSuccess {
+            recordICloudSyncTime()
+        }
         await refreshAllLoginStatus()
+        return outcome
+    }
+
+    /// 把一批失败聚合成 OperationOutcome:无失败→success;全失败→failure;部分→partial。
+    private func makeOutcome(failures: [SyncError], total: Int, failedTitle: String) -> OperationOutcome {
+        guard let representative = failures.first else { return .success }
+        if failures.count >= total {
+            return .failure(representative)
+        }
+        let partial = SyncError(
+            code: representative.code,
+            kind: .partialFailure(failed: failures.count, total: total),
+            title: failedTitle,
+            advice: representative.advice ?? "请稍后重试。",
+            rawDescription: representative.rawDescription
+        )
+        return .partial(partial)
     }
 
     /// 云端同步预览（时间 + 平台列表），不下载 Cookie
