@@ -154,7 +154,7 @@ class QRCodeViewModel {
         Task.detached {
             await actorRef.closeServer()
         }
-        print("停止")
+        Logger.debug("停止", category: .ui)
     }
     
     func showToast(_ success: Bool, title: String, hideAfter: TimeInterval? = 1.5) {

@@ -467,7 +467,7 @@ struct PlayerControlView: View {
             }
         }
         .onAppear {
-            print("[VolumeHUD] PlayerControlView appeared, initial volume=\(systemVolumeObserver.volume)")
+            Logger.debug("[VolumeHUD] PlayerControlView appeared, initial volume=\(systemVolumeObserver.volume)", category: .ui)
             roomInfoViewModel.showControl = true
             restoreControlFocus()
         }

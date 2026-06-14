@@ -76,7 +76,7 @@ struct ListMainView: View {
     }
 
     private func handleMoveCommand(_ direction: MoveCommandDirection) {
-        print("ListMainView handleMoveCommand direction=\(direction) focus=\(String(describing: focusState)) selectedIndex=\(liveViewModel.selectedRoomListIndex)")
+        Logger.debug("ListMainView handleMoveCommand direction=\(direction) focus=\(String(describing: focusState)) selectedIndex=\(liveViewModel.selectedRoomListIndex)", category: .ui)
         switch focusState {
         case .leftMenu, .leftFavorite:
             if direction == .right {
@@ -366,9 +366,9 @@ struct ListMainView: View {
                     liveViewModel.showToast(true, title: "程序返回前台，正在为您刷新列表", hideAfter: 3)
                     liveViewModel.roomPage = 1
                 case .background:
-                    print("background。。。。")
+                    Logger.debug("background。。。。", category: .app)
                 case .inactive:
-                    print("inactive。。。。")
+                    Logger.debug("inactive。。。。", category: .app)
                 @unknown default:
                     break
             }

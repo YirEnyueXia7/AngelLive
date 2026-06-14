@@ -81,7 +81,7 @@ struct LiveCardView: View {
                     // 前景封面图
                     KFImage(URL(string: currentLiveModel.roomCover))
                         .onFailure { error in
-                            print("Image loading failed: \(error)")
+                            Logger.warning("Image loading failed: \(error)", category: .ui)
                         }
                         .placeholder {
                             placeholderImage
@@ -118,7 +118,7 @@ struct LiveCardView: View {
         .buttonStyle(.card)
         .focused(externalFocusState ?? $internalFocusState, equals: .mainContent(index))
         .onMoveCommand { direction in
-            print("LiveCardView onMoveCommand index=\(index) direction=\(direction)")
+            Logger.debug("LiveCardView onMoveCommand index=\(index) direction=\(direction)", category: .ui)
             onMoveCommand?(direction)
         }
         .onChange(of: currentFocusValue) { oldValue, newValue in

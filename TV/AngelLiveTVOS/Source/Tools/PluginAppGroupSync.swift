@@ -20,7 +20,7 @@ enum PluginAppGroupSync {
         let fm = FileManager.default
 
         guard let containerURL = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
-            print("[PluginSync] App Group container not available, skipping sync.")
+            Logger.warning("[PluginSync] App Group container not available, skipping sync.", category: .sync)
             return
         }
 
@@ -28,7 +28,7 @@ enum PluginAppGroupSync {
         let sourcePluginsDir = sourceLiveParseDir.appendingPathComponent("plugins", isDirectory: true)
 
         guard fm.fileExists(atPath: sourcePluginsDir.path) else {
-            print("[PluginSync] No plugins directory at \(sourceLiveParseDir.path), nothing to sync.")
+            Logger.debug("[PluginSync] No plugins directory at \(sourceLiveParseDir.path), nothing to sync.", category: .sync)
             return
         }
 
@@ -55,9 +55,9 @@ enum PluginAppGroupSync {
                 try fm.copyItem(at: sourceState, to: destState)
             }
 
-            print("[PluginSync] Successfully synced plugins to App Group container.")
+            Logger.debug("[PluginSync] Successfully synced plugins to App Group container.", category: .sync)
         } catch {
-            print("[PluginSync] Sync failed: \(error)")
+            Logger.warning("[PluginSync] Sync failed: \(error)", category: .sync)
         }
     }
 }

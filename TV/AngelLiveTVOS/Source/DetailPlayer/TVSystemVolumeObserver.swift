@@ -10,6 +10,7 @@
 import Foundation
 import AVFoundation
 import Combine
+import AngelLiveCore
 
 @MainActor
 final class TVSystemVolumeObserver: ObservableObject {
@@ -29,13 +30,13 @@ final class TVSystemVolumeObserver: ObservableObject {
     init() {
         let initial = session.outputVolume
         self.volume = initial
-        print("[VolumeHUD] observer init, initial outputVolume=\(initial)")
+        Logger.debug("[VolumeHUD] observer init, initial outputVolume=\(initial)", category: .ui)
         installObservation()
     }
 
     deinit {
         observation?.invalidate()
-        print("[VolumeHUD] observer deinit")
+        Logger.debug("[VolumeHUD] observer deinit", category: .ui)
     }
 
     private func installObservation() {
@@ -46,7 +47,7 @@ final class TVSystemVolumeObserver: ObservableObject {
                 self?.handle(newValue: newValue)
             }
         }
-        print("[VolumeHUD] KVO observation installed on AVAudioSession.outputVolume")
+        Logger.debug("[VolumeHUD] KVO observation installed on AVAudioSession.outputVolume", category: .ui)
     }
 
     private func handle(newValue: Float) {
@@ -55,6 +56,6 @@ final class TVSystemVolumeObserver: ObservableObject {
         volume = clamped
         hasReceivedRealChange = true
         changeTick &+= 1
-        print("[VolumeHUD] outputVolume \(previous) -> \(clamped) tick=\(changeTick)")
+        Logger.debug("[VolumeHUD] outputVolume \(previous) -> \(clamped) tick=\(changeTick)", category: .ui)
     }
 }

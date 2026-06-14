@@ -8,6 +8,7 @@ import Foundation
 import Network
 import Observation
 import AngelLiveDependencies
+import AngelLiveCore
 
 // 输入事件：字段类型 + 内容
 // id 每次都是新 UUID,使 SwiftUI 的 onChange(of: lastEvent?.id) 即使在重复提交相同内容时也能触发。
@@ -67,7 +68,7 @@ final class RemoteInputService {
 
             listener.start(queue: .global(qos: .utility))
         } catch {
-            print("[RemoteInputService] start error: \(error)")
+            Logger.warning("[RemoteInputService] start error: \(error)", category: .sync)
         }
     }
 

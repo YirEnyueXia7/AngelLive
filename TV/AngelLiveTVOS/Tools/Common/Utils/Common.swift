@@ -29,7 +29,7 @@ class Common {
     public class func jsonToData(jsonDic:Dictionary<String, Any>) -> Data? {
         if (!JSONSerialization.isValidJSONObject(jsonDic)) {
             
-            print("is not a valid json object")
+            Logger.warning("is not a valid json object", category: .general)
             
             return nil
         }
@@ -39,7 +39,7 @@ class Common {
         //Data转换成String打印输出
         let str = String(data:data!, encoding: String.Encoding.utf8)
         //输出json字符串
-        print("Json Str:\(str!)")
+        Logger.debug("Json Str:\(str!)", category: .general)
         return data
     }
     

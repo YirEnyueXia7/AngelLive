@@ -23,7 +23,7 @@ class ContentProvider: TVTopShelfContentProvider {
         let fm = FileManager.default
 
         guard let containerURL = fm.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier) else {
-            print("[TopShelf] App Group container not available.")
+            Logger.warning("[TopShelf] App Group container not available.", category: .app)
             return
         }
 
@@ -35,7 +35,7 @@ class ContentProvider: TVTopShelfContentProvider {
             .appendingPathComponent("state.json")
 
         guard fm.fileExists(atPath: sourcePluginsDir.path) else {
-            print("[TopShelf] No plugins in App Group container.")
+            Logger.debug("[TopShelf] No plugins in App Group container.", category: .app)
             return
         }
 
@@ -44,7 +44,7 @@ class ContentProvider: TVTopShelfContentProvider {
         let destPluginsDir = destLiveParseDir.appendingPathComponent("plugins", isDirectory: true)
         let destState = destLiveParseDir.appendingPathComponent("state.json")
 
-        print("[TopShelf] Syncing plugins to: \(destLiveParseDir.path)")
+        Logger.debug("[TopShelf] Syncing plugins to: \(destLiveParseDir.path)", category: .app)
 
         do {
             try fm.createDirectory(at: destLiveParseDir, withIntermediateDirectories: true)
@@ -61,24 +61,24 @@ class ContentProvider: TVTopShelfContentProvider {
                 try fm.copyItem(at: sourceState, to: destState)
             }
 
-            print("[TopShelf] Synced plugins from App Group to local Caches.")
+            Logger.debug("[TopShelf] Synced plugins from App Group to local Caches.", category: .app)
         } catch {
-            print("[TopShelf] Failed to sync plugins: \(error)")
+            Logger.warning("[TopShelf] Failed to sync plugins: \(error)", category: .app)
         }
     }
 
     override func loadTopShelfContent() async -> (any TVTopShelfContent)? {
-        print("[TopShelf] loadTopShelfContent() called")
+        Logger.debug("[TopShelf] loadTopShelfContent() called", category: .app)
 
         // 打印 App Group 插件目录内容
         let fm = FileManager.default
         if let container = fm.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier) {
             let pluginsDir = container.appendingPathComponent("LiveParse/plugins", isDirectory: true)
-            print("[TopShelf] App Group plugins dir: \(pluginsDir.path)")
-            print("[TopShelf] Exists: \(fm.fileExists(atPath: pluginsDir.path))")
+            Logger.debug("[TopShelf] App Group plugins dir: \(pluginsDir.path)", category: .app)
+            Logger.debug("[TopShelf] Exists: \(fm.fileExists(atPath: pluginsDir.path))", category: .app)
             if let contents = try? fm.contentsOfDirectory(atPath: pluginsDir.path) {
-                print("[TopShelf] Plugin count: \(contents.count)")
-                print("[TopShelf] Plugins: \(contents)")
+                Logger.debug("[TopShelf] Plugin count: \(contents.count)", category: .app)
+                Logger.debug("[TopShelf] Plugins: \(contents)", category: .app)
             }
         }
 
@@ -90,12 +90,12 @@ class ContentProvider: TVTopShelfContentProvider {
 
         do {
             // 1. 从 CloudKit 读取收藏列表
-            print("[TopShelf] Fetching favorites from CloudKit...")
+            Logger.debug("[TopShelf] Fetching favorites from CloudKit...", category: .app)
             let favorites = try await FavoriteService.searchRecord()
-            print("[TopShelf] Found \(favorites.count) favorites")
+            Logger.debug("[TopShelf] Found \(favorites.count) favorites", category: .app)
 
             guard !favorites.isEmpty else {
-                print("[TopShelf] No favorites, returning nil")
+                Logger.debug("[TopShelf] No favorites, returning nil", category: .app)
                 return nil
             }
 
@@ -103,7 +103,7 @@ class ContentProvider: TVTopShelfContentProvider {
             let liveStreamers = await fetchLiveStatusWithTimeout(favorites: favorites)
 
             guard !liveStreamers.isEmpty else {
-                print("[TopShelf] No live streamers, returning nil")
+                Logger.debug("[TopShelf] No live streamers, returning nil", category: .app)
                 return nil
             }
 
@@ -111,7 +111,7 @@ class ContentProvider: TVTopShelfContentProvider {
             return createTopShelfContent(from: liveStreamers)
 
         } catch {
-            print("[TopShelf] Error loading content: \(error)")
+            Logger.warning("[TopShelf] Error loading content: \(error)", category: .app)
             return nil
         }
     }
@@ -161,7 +161,7 @@ class ContentProvider: TVTopShelfContentProvider {
                 return result
             }
         } catch {
-            print("[TopShelf] Failed to fetch status for \(favorite.userName): \(error)")
+            Logger.warning("[TopShelf] Failed to fetch status for \(favorite.userName): \(error)", category: .app)
             return nil
         }
     }

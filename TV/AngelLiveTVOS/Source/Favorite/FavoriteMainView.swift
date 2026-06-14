@@ -176,9 +176,9 @@ struct FavoriteMainView: View {
                         })
                     }
                 case .background:
-                    print("background。。。。")
+                    Logger.debug("background。。。。", category: .app)
                 case .inactive:
-                    print("inactive。。。。")
+                    Logger.debug("inactive。。。。", category: .app)
                     startTimer()
                 @unknown default:
                     break

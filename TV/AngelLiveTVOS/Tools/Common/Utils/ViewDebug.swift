@@ -13,6 +13,7 @@
 
 import Foundation
 import SwiftUI
+import AngelLiveCore
 
 extension View {
     func debugOnlyModifier<T: View>(_ modifier: (Self) -> T) -> some View {
@@ -42,7 +43,7 @@ extension View {
     func debugPrintSize(_ title: String = "Print Size") -> some View {
         debugOnlyModifier {
             $0.readSize { size in
-                print("\(title) -> size", size.debugDescription)
+                Logger.debug("\(title) -> size \(size.debugDescription)", category: .ui)
             }
         }
     }

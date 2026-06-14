@@ -58,10 +58,10 @@ class SyncManager {
 
         do {
             serverChannel = try bootstrap.bind(host: Common.getWiFiIPAddress() ?? "localhost", port: httpPort).wait()
-            print("Server is running on \(serverChannel?.localAddress?.ipAddress ?? "")")
+            Logger.debug("Server is running on \(serverChannel?.localAddress?.ipAddress ?? "")", category: .sync)
         } catch {
             self.delegate?.syncManagerDidConnectError(error: error)
-            print("Failed to start server: \(error)")
+            Logger.warning("Failed to start server: \(error)", category: .sync)
         }
         
     }
@@ -83,7 +83,7 @@ class UDPListener: NSObject, GCDAsyncUdpSocketDelegate {
             try udpSocket?.bind(toPort: UInt16(udpPort)) // 绑定到任意可用端口
             try udpSocket?.beginReceiving() // 开始接收数据
         } catch {
-            print("Failed to start UDP server: \(error)")
+            Logger.warning("Failed to start UDP server: \(error)", category: .sync)
         }
     }
     
@@ -95,7 +95,7 @@ class UDPListener: NSObject, GCDAsyncUdpSocketDelegate {
     func udpSocket(_ sock: GCDAsyncUdpSocket, didReceive data: Data, fromAddress address: Data, withFilterContext filterContext: Any?) {
         // 处理接收到的数据
         if let message = String(data: data, encoding: .utf8) {
-            print("Received message: \(message)")
+            Logger.debug("Received message: \(message)", category: .sync)
             do {
                 if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                    json["type"] as? String == "hello" {
@@ -160,7 +160,7 @@ final class HTTPHandler: ChannelInboundHandler {
         case .end:
             // 请求体已完全接收，处理请求
             if let body = requestBody, let bodyString = body.getString(at: 0, length: body.readableBytes) {
-                print("Request body: \(bodyString)")
+                Logger.debug("Request body: \(bodyString)", category: .sync)
                 if requestHeaderT?.uri.contains("sync/follow") == true {
                     let resp = jsonString(["status": true, "message": "success"])
                     
