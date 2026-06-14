@@ -48,6 +48,10 @@ final class RoomInfoViewModel {
     var currentCdnIndex = 0  // 当前选中的线路索引
     var currentQualityIndex = 0  // 当前选中的清晰度索引
     var isPlaying = false
+    /// KSPlayer 真实播放状态(来自 VM 抢到的 delegate)。
+    /// PlayerContainerView 的 `playerCoordinator.state` 因 delegate 被抢已冻结不可信,
+    /// UI 的缓冲/加载判定应读这里。
+    private(set) var engineState: PlaybackEngineState = .initialized
     var isHLSStream = false  // 当前是否为 HLS 流（支持 AirPlay 投屏）
 
     var selectedPlayerKernel: PlayerKernel {
@@ -119,15 +123,24 @@ final class RoomInfoViewModel {
     /// 且出错有清晰 .failed 走 fallback),与旧 watchdog 的 KSAV 豁免一致。
     @MainActor
     private func currentPlaybackSample() -> PlaybackSample? {
-        guard let player = watchedPlayerLayer?.player else { return nil }
-        if player is KSAVPlayer { return nil }
+        guard let player = watchedPlayerLayer?.player else {
+            print("[StateProbe][sample] no watchedPlayerLayer")
+            return nil
+        }
+        if player is KSAVPlayer {
+            print("[StateProbe][sample] KSAV 路径跳过采样 player=\(type(of: player))")
+            return nil
+        }
         let playhead = player.currentPlaybackTime
-        return PlaybackSample(
+        let sample = PlaybackSample(
             bytesRead: player.dynamicInfo.bytesRead,
             playhead: playhead,
             buffered: max(0, player.playableTime - playhead),
             isPlaying: player.isPlaying
         )
+        // [StateProbe] 1Hz 真值快照:看卡顿瞬间 bytes/playhead 是否推进、isPlaying 真假、协调器 phase。
+        print("[StateProbe][sample 1Hz] bytes=\(sample.bytesRead) playhead=\(String(format: "%.2f", sample.playhead)) buffered=\(String(format: "%.2f", sample.buffered)) isPlaying=\(sample.isPlaying) phase=\(recoveryCoordinator.phase)")
+        return sample
     }
 
     /// KSPlayerState(8 case)→ 协调器抽象状态。
@@ -805,8 +818,12 @@ extension RoomInfoViewModel: WebSocketConnectionDelegate {
 extension RoomInfoViewModel: KSPlayerLayerDelegate {
     func player(layer: KSPlayer.KSPlayerLayer, state: KSPlayer.KSPlayerState) {
         isPlaying = layer.player.isPlaying
+        let engine = mapEngineState(state)
+        engineState = engine   // 发布真实状态供 UI 判缓冲/加载(取代冻结的 playerCoordinator.state)
+        // [StateProbe] 被 RoomInfoViewModel 抢走的「真实」delegate —— KSPlayer 实际状态从这里来。
+        print("[StateProbe][VM.delegate(真实)] state=\(state) layer.player.isPlaying=\(layer.player.isPlaying) player=\(type(of: layer.player))")
         // 状态变化喂给协调器:起播成功/抖动/终态的判定与熔断预算全在状态机内。
-        recoveryCoordinator.stateChanged(mapEngineState(state))
+        recoveryCoordinator.stateChanged(engine)
     }
 
     func player(layer: KSPlayer.KSPlayerLayer, currentTime: TimeInterval, totalTime: TimeInterval) {

@@ -183,6 +183,8 @@ struct PlayerContentView: View {
         }
         .onChange(of: playerCoordinator.state) {
             let state = playerCoordinator.state
+            // [StateProbe] KSVideoPlayer.Coordinator 自己的 state —— 验证它是否被抢 delegate 后冻结。
+            print("[StateProbe][Coordinator.state] -> \(state) state.isPlaying=\(state.isPlaying)")
             guard useKSPlayer else { return }
             Logger.debug("[PlayerFlow] KS state changed -> \(state)", category: .player)
             switch state {
@@ -502,12 +504,11 @@ struct PlayerContentView: View {
 
     private var shouldShowBuffering: Bool {
         if useKSPlayer {
-            // 已经渲染过帧后,只在用户主动 seek 时再现 — 直播流 KSPlayer.state 长期停留
-            // 在 .buffering 是常态(KSPlayer 视为 isPlaying),不能再以此判定"缓冲中"。
-            if hasKSStartedPlayback {
-                return playerCoordinator.playerLayer?.player.playbackState == .seeking
-            }
-            return playerCoordinator.state == .buffering || playerCoordinator.playerLayer?.player.playbackState == .seeking
+            // 用 VM 抢到的真实状态判缓冲:engineState == .buffering 且未在播 = 真卡顿,显示 loading。
+            // playerCoordinator.state 因 delegate 被 RoomInfoViewModel 抢走已冻结,不能再用。
+            // 加 !isPlaying 门:KSPlayer 边播边缓冲(isPlaying=true)时不显示菊花,避免常驻。
+            let seeking = playerCoordinator.playerLayer?.player.playbackState == .seeking
+            return (viewModel.engineState == .buffering && !viewModel.isPlaying) || seeking
         }
         // VLC 直播流在播放后仍可能短暂回报 buffering，避免中间菊花常驻干扰观看。
         return vlcState.isBuffering && !hasVLCStartedPlayback
@@ -548,7 +549,7 @@ struct PlayerContentView: View {
         if useKSPlayer {
             return PlayerControlBridge(
                 isPlaying: viewModel.isPlaying || playerCoordinator.state.isPlaying,
-                isBuffering: playerCoordinator.state == .buffering || playerCoordinator.playerLayer?.player.playbackState == .seeking,
+                isBuffering: (viewModel.engineState == .buffering && !viewModel.isPlaying) || playerCoordinator.playerLayer?.player.playbackState == .seeking,
                 isInitialLoading: isInitialStreamLoading,
                 supportsPictureInPicture: playerCoordinator.playerLayer is KSComplexPlayerLayer,
                 togglePlayPause: {

@@ -275,7 +275,10 @@ class ChatBubbleBaseCell: UITableViewCell {
         let verticalPadding = AppConstants.Spacing.xs
 
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
-        bubbleView.layer.masksToBounds = true
+        // 纯色背景 + 边框的圆角由 cornerRadius 本身绘制,无需 masksToBounds 裁剪。
+        // 关掉 masksToBounds 避免每个气泡触发离屏渲染(offscreen rendering)——
+        // 这是快速滚动弹幕列表「强制圆角」的主要性能开销。标签有内边距不会溢出圆角弧,安全。
+        bubbleView.layer.masksToBounds = false
         bubbleView.layer.cornerCurve = .continuous
         contentView.addSubview(bubbleView)
 
@@ -365,14 +368,26 @@ final class ChatBubbleCapsuleCell: ChatBubbleBaseCell {
     
     override func configure(with message: ChatMessage) {
         super.configure(with: message)
-        // 立即设置一次，layoutSubviews 会在布局完成后再次修正
-        bubbleView.layer.cornerRadius = bubbleView.bounds.height / 2
+        // ★ 关键:configure 时 bounds.height 还是 0,不能靠它算圆角。
+        // 先按字体度量给一个「稳定的非零」估算圆角,保证即使后续 layoutSubviews
+        // 没能以正确高度回调(全屏切换后的首个布局 pass 常见 height≈0,且不保证再回调,
+        // 要手动滚动才修),气泡也始终是胶囊而非直角。
+        bubbleView.layer.cornerRadius = Self.estimatedSingleLineHeight / 2
     }
-    
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        // 胶囊样式：圆角 = 高度/2
-        bubbleView.layer.cornerRadius = bubbleView.bounds.height / 2
+        // 有真实高度时精修成精确胶囊;height==0 的测量 pass 跳过,保留 configure 的估算值,
+        // 绝不把 cornerRadius 写回 0(那正是切换后变直角的根因)。
+        let h = bubbleView.bounds.height
+        guard h > 0 else { return }
+        bubbleView.layer.cornerRadius = h / 2
+    }
+
+    /// 单行气泡的稳定高度估算:caption1 行高 + 上下各 8pt 堆栈内边距。随 Dynamic Type 变化。
+    /// 估算略大无妨——CALayer 会把 cornerRadius 钳到 min(w,h)/2,渲染出来仍是完美胶囊。
+    private static var estimatedSingleLineHeight: CGFloat {
+        ceil(UIFont.preferredFont(forTextStyle: .caption1).lineHeight) + 8 * 2
     }
 }
 
@@ -380,10 +395,18 @@ final class ChatBubbleCapsuleCell: ChatBubbleBaseCell {
 
 final class ChatBubbleRoundedCell: ChatBubbleBaseCell {
     static let reuseIdentifier = "ChatBubbleRoundedCell"
-    
+
+    private static let cornerRadius: CGFloat = 12
+
     override func configure(with message: ChatMessage) {
         super.configure(with: message)
-        bubbleView.layer.cornerRadius = 12
+        bubbleView.layer.cornerRadius = Self.cornerRadius
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 重申固定圆角,防止全屏切换的布局/复用过程中 layer 圆角被重置成直角。
+        bubbleView.layer.cornerRadius = Self.cornerRadius
     }
 }
 
